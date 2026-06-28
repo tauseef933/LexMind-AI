@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import datetime
 
-import backend.config  # noqa: F401 — load .env before reading DATABASE_URL
+import config  # noqa: F401 — load .env before reading DATABASE_URL
 
 from sqlalchemy import (
     Boolean,

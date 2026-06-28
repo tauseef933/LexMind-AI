@@ -16,13 +16,13 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy.orm import Session
 
-from backend.models.database import Document, SessionLocal
-from backend.services.case_summary import generate_summary
-from backend.services.risk_detector import detect_risks
+from models.database import Document, SessionLocal
+from services.case_summary import generate_summary
+from services.risk_detector import detect_risks
 
 logger = logging.getLogger("lexmind.hearing_prep")
 
-from backend.config import GROQ_MODEL
+from config import GROQ_MODEL
 _CHROMA_PATH = os.getenv("CHROMA_PERSIST_PATH", "./chroma_db")
 
 _STRATEGY_SYSTEM = """You are a senior trial attorney preparing for a court hearing.

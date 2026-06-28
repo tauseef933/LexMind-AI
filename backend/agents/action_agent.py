@@ -16,7 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger("lexmind.action_agent")
 
-from backend.config import GROQ_MODEL
+from config import GROQ_MODEL
 
 # ---------------------------------------------------------------------------
 # Intent classification prompt

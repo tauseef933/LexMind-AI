@@ -21,8 +21,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from backend.agents.orchestrator import process
-from backend.models.database import Message, get_db
+from agents.orchestrator import process
+from models.database import Message, get_db
 
 logger = logging.getLogger("lexmind.chat")
 

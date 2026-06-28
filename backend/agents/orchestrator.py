@@ -19,7 +19,7 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 
-from backend.agents import (
+from agents import (
     action_agent,
     analytics_agent,
     document_agent,
@@ -28,7 +28,7 @@ from backend.agents import (
 
 logger = logging.getLogger("lexmind.orchestrator")
 
-from backend.config import GROQ_MODEL
+from config import GROQ_MODEL
 
 # ---------------------------------------------------------------------------
 # Exact routing prompt from spec

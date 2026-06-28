@@ -14,8 +14,8 @@ import re
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from backend.rag.retrieval import hybrid_retrieve
-from backend.rag.reranker import rerank
+from rag.retrieval import hybrid_retrieve
+from rag.reranker import rerank
 
 logger = logging.getLogger("lexmind.document_agent")
 
@@ -41,7 +41,7 @@ Rules:
 5. Structure the response with clear headings if listing multiple points
 """
 
-from backend.config import GROQ_MODEL
+from config import GROQ_MODEL
 
 
 def _build_context(chunks: list[dict]) -> str:

@@ -20,7 +20,7 @@ import pytesseract
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from PIL import Image  # Pillow — bundled with pytesseract
 
-from backend.rag.embeddings import encode
+from rag.embeddings import encode
 
 logger = logging.getLogger("lexmind.ingestion")
 

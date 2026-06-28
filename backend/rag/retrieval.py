@@ -19,7 +19,7 @@ import os
 import chromadb
 from rank_bm25 import BM25Okapi
 
-from backend.rag.embeddings import encode
+from rag.embeddings import encode
 
 logger = logging.getLogger("lexmind.retrieval")
 

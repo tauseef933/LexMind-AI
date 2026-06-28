@@ -7,11 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from backend.models.database import Case, Message, get_db
-from backend.services.case_summary import generate_summary
-from backend.services.risk_detector import detect_risks
-from backend.services.timeline_builder import build_timeline
-from backend.services.hearing_prep import prepare_hearing
+from models.database import Case, Message, get_db
+from services.case_summary import generate_summary
+from services.risk_detector import detect_risks
+from services.timeline_builder import build_timeline
+from services.hearing_prep import prepare_hearing
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 

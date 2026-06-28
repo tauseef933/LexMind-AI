@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from backend.models.database import Billing, get_db
+from models.database import Billing, get_db
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 

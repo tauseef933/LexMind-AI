@@ -17,7 +17,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger("lexmind.risk_detector")
 
-from backend.config import GROQ_MODEL
+from config import GROQ_MODEL
 _CHROMA_PATH = os.getenv("CHROMA_PERSIST_PATH", "./chroma_db")
 
 # ---------------------------------------------------------------------------

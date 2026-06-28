@@ -16,7 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger("lexmind.case_summary")
 
-from backend.config import GROQ_MODEL
+from config import GROQ_MODEL
 _CHROMA_PATH = os.getenv("CHROMA_PERSIST_PATH", "./chroma_db")
 
 _SYSTEM = """You are a senior legal analyst. Based on the case documents provided,

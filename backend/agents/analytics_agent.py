@@ -15,11 +15,11 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import text
 
-from backend.models.database import engine
+from models.database import engine
 
 logger = logging.getLogger("lexmind.analytics_agent")
 
-from backend.config import GROQ_MODEL
+from config import GROQ_MODEL
 
 # ---------------------------------------------------------------------------
 # Few-shot system prompt

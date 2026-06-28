@@ -9,9 +9,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFi
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from backend.config import UPLOADS_DIR
-from backend.models.database import Case, Document, get_db
-from backend.rag.ingestion import delete_document_chunks, ingest_document
+from config import UPLOADS_DIR
+from models.database import Case, Document, get_db
+from rag.ingestion import delete_document_chunks, ingest_document
 
 logger = logging.getLogger("lexmind.documents")
 

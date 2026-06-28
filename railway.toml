@@ -1,10 +1,9 @@
-# Railway deploy config — Root Directory must be the REPO ROOT (folder that contains backend/)
-# Do NOT set Root Directory to "backend" or imports like "backend.config" will fail.
+# Railway deploy config — Root Directory = repo root (folder that contains backend/)
 
 [build]
 buildCommand = "pip install -r backend/requirements.txt"
 
 [deploy]
-startCommand = "uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT"
+startCommand = "cd backend && uvicorn api.main:app --host 0.0.0.0 --port $PORT"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

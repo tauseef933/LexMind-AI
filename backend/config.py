@@ -9,9 +9,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# lexmind-ai/  (parent of backend/)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BACKEND_ROOT = Path(__file__).resolve().parent
+_parent = BACKEND_ROOT.parent
+# Monorepo: repo root sits above backend/; Railway deploys backend/ as /app
+if (_parent / "frontend").is_dir() or (_parent / "Procfile").is_file():
+    PROJECT_ROOT = _parent
+else:
+    PROJECT_ROOT = BACKEND_ROOT
 
 # Load backend/.env first, then project-root .env (root overrides)
 for _env_file in (BACKEND_ROOT / ".env", PROJECT_ROOT / ".env"):

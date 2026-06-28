@@ -1,4 +1,4 @@
-import backend.config  # noqa: F401 — load .env before anything reads env vars
+import config  # noqa: F401 — load .env before anything reads env vars
 
 import logging
 
@@ -6,14 +6,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from backend.api.middleware import (
+from api.middleware import (
     APIKeyMiddleware,
     LoggingMiddleware,
     get_allowed_origins,
 )
-from backend.api.routes import analytics, cases, chat, documents
-from backend.config import UPLOADS_DIR, auth_enabled, get_secret_key
-from backend.models.database import init_db
+from api.routes import analytics, cases, chat, documents
+from config import UPLOADS_DIR, auth_enabled, get_secret_key
+from models.database import init_db
 
 # ---------------------------------------------------------------------------
 # Logging

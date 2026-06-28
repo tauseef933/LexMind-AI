@@ -16,7 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger("lexmind.research_agent")
 
-from backend.config import GROQ_MODEL
+from config import GROQ_MODEL
 _SERPER_URL = "https://google.serper.dev/search"
 
 _SYSTEM = """You are a senior legal researcher. Using the provided search results,
