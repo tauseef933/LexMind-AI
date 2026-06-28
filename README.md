@@ -1,0 +1,3 @@
+# LexMind AI — Legal Intelligence Platform
+
+LexMind AI is a multi-agent RAG (Retrieval-Augmented Generation) system built for legal professionals, combining a Python FastAPI backend with a React TypeScript frontend to deliver intelligent document analysis, case risk detection, timeline generation, and hearing preparation — all powered by Groq's `llama-3.3-70b-versatile` LLM, hybrid dense/sparse retrieval over ChromaDB and BM25, Cohere reranking, and a LangGraph orchestrator that fans user queries out to specialised agents (document, analytics, action, research) running in parallel, then streams the merged response back to the browser via Server-Sent Events.
