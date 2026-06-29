@@ -14,7 +14,11 @@ import type {
 
 // ─── Axios instance ───────────────────────────────────────────────────────────
 
-const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000'
+const BASE_URL =
+  (import.meta.env.VITE_API_URL as string | undefined) ??
+  "http://localhost:8000";
+
+alert("BASE_URL = " + BASE_URL);
 
 console.log("VITE_API_URL:", import.meta.env.VITE_API_URL);
 console.log("BASE_URL:", BASE_URL);
