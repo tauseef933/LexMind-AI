@@ -16,6 +16,9 @@ import type {
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000'
 
+console.log("VITE_API_URL:", import.meta.env.VITE_API_URL);
+console.log("BASE_URL:", BASE_URL);
+
 export const apiClient = axios.create({
   baseURL: BASE_URL,
   headers: { 'Content-Type': 'application/json' },
