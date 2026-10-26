@@ -38,7 +38,7 @@ export default function RiskPanel({ risks, message }: RiskPanelProps) {
         {(['HIGH', 'MEDIUM', 'LOW'] as const).map((sev) => (
           <span
             key={sev}
-            className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', SEVERITY_STYLES[sev])}
+            className={cn('rounded-full border px-2.5 py-0.5 text-2xs font-semibold', SEVERITY_STYLES[sev])}
           >
             {counts[sev] ?? 0} {sev}
           </span>
@@ -56,13 +56,13 @@ export default function RiskPanel({ risks, message }: RiskPanelProps) {
             />
             <span
               className={cn(
-                'rounded border px-1.5 py-px text-[10px] font-semibold',
+                'rounded border px-1.5 py-px text-2xs font-semibold',
                 SEVERITY_STYLES[risk.severity] ?? SEVERITY_STYLES.LOW,
               )}
             >
               {risk.severity}
             </span>
-            <span className="text-[11px] uppercase tracking-wide text-slate-400">{risk.category}</span>
+            <span className="text-2xs uppercase tracking-wide text-slate-400">{risk.category}</span>
           </div>
           <p className="text-sm text-slate-800">{risk.description}</p>
           {risk.recommendation && (
@@ -70,7 +70,7 @@ export default function RiskPanel({ risks, message }: RiskPanelProps) {
               <span className="font-semibold">Recommendation:</span> {risk.recommendation}
             </p>
           )}
-          {risk.source && <p className="text-[11px] text-slate-400">{risk.source}</p>}
+          {risk.source && <p className="text-2xs text-slate-400">{risk.source}</p>}
         </div>
       ))}
     </div>

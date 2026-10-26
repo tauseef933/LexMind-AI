@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Scale, Loader2, Trash2 } from 'lucide-react'
 import { useCase } from '@/hooks/useCases'
 import { deleteCase } from '@/lib/api'
+import { useConfirm, useToast } from '@/lib/feedback'
 import ChatWindow from '@/components/Chat/ChatWindow'
 
 export default function DashboardPage() {
@@ -12,6 +13,8 @@ export default function DashboardPage() {
   const queryClient = useQueryClient()
   const { data: activeCase, isLoading, isError } = useCase(caseId)
   const [isDeleting, setIsDeleting] = useState(false)
+  const toast = useToast()
+  const confirm = useConfirm()
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteCase(id),
@@ -23,16 +26,20 @@ export default function DashboardPage() {
 
   async function handleDeleteCase() {
     if (!activeCase) return
-    const confirmed = window.confirm(
-      `Delete case "${activeCase.name}"? It will be archived and removed from your case list.`,
-    )
+    const confirmed = await confirm({
+      title: `Delete "${activeCase.name}"?`,
+      message: 'The case will be archived and removed from your case list.',
+      confirmLabel: 'Delete case',
+      destructive: true,
+    })
     if (!confirmed) return
 
     setIsDeleting(true)
     try {
       await deleteMutation.mutateAsync(activeCase.id)
+      toast({ title: 'Case deleted', description: activeCase.name, variant: 'success' })
     } catch {
-      window.alert('Failed to delete case. Please try again.')
+      toast({ title: 'Could not delete the case', description: 'Please try again.', variant: 'error' })
       setIsDeleting(false)
     }
   }
@@ -41,7 +48,7 @@ export default function DashboardPage() {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 text-[#1F3D6E] animate-spin" />
+          <Loader2 className="h-8 w-8 text-brand animate-spin" />
           <p className="text-sm text-slate-500">Loading case…</p>
         </div>
       </div>
@@ -55,7 +62,7 @@ export default function DashboardPage() {
         <button
           type="button"
           onClick={() => navigate('/')}
-          className="inline-flex items-center gap-1.5 text-sm text-[#1F3D6E] hover:underline font-medium"
+          className="inline-flex items-center gap-1.5 text-sm text-brand hover:underline font-medium"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to cases
@@ -75,7 +82,7 @@ export default function DashboardPage() {
         >
           <ArrowLeft className="h-4 w-4 text-slate-500" />
         </button>
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[#1F3D6E]">
+        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-brand">
           <Scale className="h-3.5 w-3.5 text-white" />
         </div>
         <div className="flex-1 flex items-center gap-2 text-sm min-w-0">

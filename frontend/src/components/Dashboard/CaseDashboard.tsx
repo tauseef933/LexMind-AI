@@ -50,7 +50,7 @@ export default function CaseDashboard({ activeCase, onClose }: CaseDashboardProp
             className={cn(
               'border-b-2 px-2.5 py-2 text-xs font-medium transition-colors',
               tab === t.id
-                ? 'border-[#1F3D6E] text-[#1F3D6E]'
+                ? 'border-brand text-brand'
                 : 'border-transparent text-slate-500 hover:text-slate-800',
             )}
           >
@@ -97,7 +97,7 @@ function ListSection({ title, items }: { title: string; items: string[] }) {
   if (!items?.length) return null
   return (
     <section className="space-y-1">
-      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{title}</h3>
+      <h3 className="text-2xs font-semibold uppercase tracking-wider text-slate-400">{title}</h3>
       <ul className="list-disc pl-4 space-y-0.5 text-sm text-slate-700">
         {items.map((item, i) => (
           <li key={i}>{item}</li>
@@ -172,7 +172,7 @@ function PrepTab({ activeCase }: { activeCase: Case }) {
         <button
           type="submit"
           disabled={prep.isPending || !hearingDate}
-          className="rounded-lg bg-[#1F3D6E] px-3 py-2 text-xs font-medium text-white hover:bg-[#163056] disabled:opacity-50"
+          className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white hover:bg-brand-hover disabled:opacity-50"
         >
           {prep.data ? 'Regenerate' : 'Generate prep sheet'}
         </button>
@@ -193,7 +193,7 @@ function PrepTab({ activeCase }: { activeCase: Case }) {
               <>
                 {strategy.opening_statement_outline && (
                   <section className="space-y-1">
-                    <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    <h3 className="text-2xs font-semibold uppercase tracking-wider text-slate-400">
                       Opening statement
                     </h3>
                     <p className="text-sm text-slate-700">{strategy.opening_statement_outline}</p>

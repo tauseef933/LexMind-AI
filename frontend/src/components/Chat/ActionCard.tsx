@@ -22,7 +22,7 @@ function slug(text: string) {
 // ─── Buttons ──────────────────────────────────────────────────────────────────
 
 const buttonClass =
-  'inline-flex items-center gap-1.5 rounded-lg border border-[#1F3D6E]/20 bg-white px-2.5 py-1.5 text-xs font-medium text-[#1F3D6E] hover:bg-[#1F3D6E]/5 disabled:opacity-50 transition-colors'
+  'inline-flex items-center gap-1.5 rounded-lg border border-brand/20 bg-white px-2.5 py-1.5 text-xs font-medium text-brand hover:bg-brand/5 disabled:opacity-50 transition-colors'
 
 function EmailButtons({ action }: { action: EmailAction }) {
   const [copied, setCopied] = useState(false)
@@ -108,7 +108,7 @@ const LABELS: Record<DraftAction['action_type'], string> = {
 export default function ActionCard({ action, caseId }: { action: DraftAction; caseId: string }) {
   return (
     <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50/50 p-3">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">
+      <p className="text-2xs font-semibold uppercase tracking-wide text-rose-700">
         {LABELS[action.action_type] ?? 'Action'} · review before using
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-2">

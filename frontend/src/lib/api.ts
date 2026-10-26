@@ -8,6 +8,7 @@ import type {
   HearingPrepResponse,
   Message,
   RisksResponse,
+  SuggestionsResponse,
   TimelineResponse,
   UploadResponse,
 } from './types'
@@ -109,6 +110,13 @@ export async function getTimeline(caseId: string): Promise<TimelineResponse> {
 
 export async function getRisks(caseId: string): Promise<RisksResponse> {
   const { data } = await apiClient.get<RisksResponse>(`/cases/${caseId}/risks`, {
+    timeout: LLM_TIMEOUT,
+  })
+  return data
+}
+
+export async function getSuggestions(caseId: string): Promise<SuggestionsResponse> {
+  const { data } = await apiClient.get<SuggestionsResponse>(`/cases/${caseId}/suggestions`, {
     timeout: LLM_TIMEOUT,
   })
   return data

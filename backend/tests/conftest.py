@@ -100,6 +100,7 @@ _LLM_MODULES = [
     "services.risk_detector",
     "services.timeline_builder",
     "services.hearing_prep",
+    "services.suggestions",
 ]
 
 

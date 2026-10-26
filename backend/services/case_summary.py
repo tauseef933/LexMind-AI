@@ -32,7 +32,7 @@ If a field cannot be determined from the documents, use an empty list or empty s
 
 
 def generate_summary(case_id: str) -> dict:
-    context = get_case_context(case_id, max_chunks=30)
+    context = get_case_context(case_id)
     if not context:
         return {
             "parties": [],

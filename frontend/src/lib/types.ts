@@ -124,6 +124,7 @@ export interface ChatMessage {
   sources?: Source[]
   agentTrace?: AgentTraceStep[]
   actions?: DraftAction[]
+  createdAt?: string   // ISO timestamp
   isStreaming?: boolean
 }
 
@@ -144,6 +145,11 @@ export interface RisksResponse {
   risks: Risk[]
   message?: string
   error?: string
+}
+
+export interface SuggestionsResponse {
+  questions: string[]
+  source: 'documents' | 'default' | 'none'
 }
 
 export interface TimelineEvent {

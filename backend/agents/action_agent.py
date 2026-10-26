@@ -73,7 +73,7 @@ Return ONLY JSON:
     "pdf_report": """You are a legal assistant writing a short report for the attorney.
 Request: {query}
 
-Case documents (excerpts, cite as [filename, pN]):
+Case documents (cite as [Source: filename, Page N]):
 {context}
 
 Write the report from the case documents only. Return ONLY JSON:
@@ -148,7 +148,7 @@ def run(query: str, case_id: str) -> dict:
             action_type = "email"   # sensible default
 
         # 2. Draft the action as structured data
-        context = get_case_context(case_id, max_chunks=30) if action_type == "pdf_report" else ""
+        context = get_case_context(case_id) if action_type == "pdf_report" else ""
         draft_prompt = _DRAFT_PROMPTS[action_type].format(
             query=query,
             today=date.today().isoformat(),

@@ -40,7 +40,7 @@ from llm import ask, get_llm, parse_json_response
 logger = logging.getLogger("lexmind.orchestrator")
 
 # ---------------------------------------------------------------------------
-# Exact routing prompt from spec
+# Routing prompt
 # ---------------------------------------------------------------------------
 ROUTING_PROMPT = """
 You are the orchestrator of a legal AI system.
@@ -48,17 +48,23 @@ Given a user message, identify all required tasks and route each to
 the correct agent. Output ONLY valid JSON, no other text.
 
 Available agents:
-- document_agent: Read, analyse and answer questions about case files, contracts, evidence, documents
-- analytics_agent: ONLY for explicit billing queries, invoice amounts, payment totals, financial disputes — NOT for general case questions or summaries
+- document_agent: Read, analyse and answer questions about case files, contracts, evidence, documents — including any amounts, fees, prices, caps or payment terms WRITTEN IN the documents
+- analytics_agent: ONLY the law firm's own billing records for this matter (invoices it issued, hours billed, totals paid, disputed invoices) — NOT money terms inside contracts
 - action_agent: Send emails, create calendar events, generate PDFs
 - research_agent: Find relevant case law, statutes, legal precedents
 
 Routing rules:
-1. Use document_agent for ANY question about what is in the case documents, case summaries, facts, obligations, risks, parties, dates, events.
-2. Use analytics_agent ONLY when the user explicitly asks about money, billing, invoices, hours billed, payments or financial data.
+1. Use document_agent for ANY question about what is in the case documents, case summaries, facts, obligations, risks, parties, dates, events — and for fees, prices, liability caps, penalties or payment deadlines stated in a contract or agreement.
+2. Use analytics_agent ONLY when the user asks about the firm's billing records: "how much have we billed", "list our invoices", "hours billed", "which invoice is disputed".
 3. Use research_agent ONLY when the user asks for external case law or legal precedents.
 4. Use action_agent ONLY when the user asks to send an email, schedule a meeting, or generate a document.
 5. Default to document_agent if unsure.
+
+Examples:
+- "What is the monthly fee under the services agreement?" → document_agent
+- "What is the liability cap in the NDA?" → document_agent
+- "How much have we invoiced the client so far?" → analytics_agent
+- "Which of our invoices is disputed?" → analytics_agent
 
 User message: {query}
 Active case: {case_name} (ID: {case_id})

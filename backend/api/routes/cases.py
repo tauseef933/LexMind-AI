@@ -13,6 +13,7 @@ from services.risk_detector import detect_risks
 from services.timeline_builder import build_timeline
 from services.hearing_prep import prepare_hearing
 from services.report_pdf import render_report_pdf
+from services.suggestions import suggest_questions
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
@@ -118,6 +119,15 @@ def case_summary(case_id: str, db: Session = Depends(get_db)):
 def case_timeline(case_id: str, db: Session = Depends(get_db)):
     _require_case(case_id, db)
     return {"timeline": build_timeline(case_id)}
+
+
+# ---------------------------------------------------------------------------
+# GET /cases/{id}/suggestions — one-click questions tailored to the documents
+# ---------------------------------------------------------------------------
+@router.get("/{case_id}/suggestions")
+def case_suggestions(case_id: str, db: Session = Depends(get_db)):
+    _require_case(case_id, db)
+    return suggest_questions(case_id)
 
 
 # ---------------------------------------------------------------------------

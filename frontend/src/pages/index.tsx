@@ -9,13 +9,12 @@ import {
   Loader2,
   AlertCircle,
   Gavel,
-  Users,
-  Calendar,
   Trash2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useCases } from '@/hooks/useCases'
 import { createCase, deleteCase } from '@/lib/api'
+import { useConfirm, useToast } from '@/lib/feedback'
 import type { Case, CreateCasePayload } from '@/lib/types'
 
 interface NewCaseFormProps {
@@ -24,30 +23,38 @@ interface NewCaseFormProps {
 
 function NewCaseForm({ onClose }: NewCaseFormProps) {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [name, setName] = useState('')
   const [client, setClient] = useState('')
   const [court, setCourt] = useState('')
+  const [hearingDate, setHearingDate] = useState('')
 
   const mutation = useMutation({
     mutationFn: (payload: CreateCasePayload) => createCase(payload),
-    onSuccess: () => {
+    onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ['cases'] })
       onClose()
+      navigate(`/dashboard/${created.id}`)   // straight into the new case
     },
   })
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) return
-    mutation.mutate({ name: name.trim(), client: client || undefined, court: court || undefined })
+    mutation.mutate({
+      name: name.trim(),
+      client: client || undefined,
+      court: court || undefined,
+      hearing_date: hearingDate || undefined,
+    })
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 p-6 shadow-2xl">
         <div className="flex items-center gap-3 mb-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#1F3D6E]/10">
-            <Gavel className="h-5 w-5 text-[#1F3D6E]" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand/10">
+            <Gavel className="h-5 w-5 text-brand" />
           </div>
           <div>
             <h2 className="text-lg font-semibold text-slate-900">New Case</h2>
@@ -60,7 +67,7 @@ function NewCaseForm({ onClose }: NewCaseFormProps) {
               Case Name <span className="text-red-500">*</span>
             </label>
             <input
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F3D6E]/20 focus:border-[#1F3D6E]/40 transition-all"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40 transition-all"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Smith v. Jones"
@@ -70,7 +77,7 @@ function NewCaseForm({ onClose }: NewCaseFormProps) {
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1.5">Client</label>
             <input
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F3D6E]/20 focus:border-[#1F3D6E]/40 transition-all"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40 transition-all"
               value={client}
               onChange={(e) => setClient(e.target.value)}
               placeholder="Alice Smith"
@@ -79,10 +86,19 @@ function NewCaseForm({ onClose }: NewCaseFormProps) {
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1.5">Court</label>
             <input
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F3D6E]/20 focus:border-[#1F3D6E]/40 transition-all"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40 transition-all"
               value={court}
               onChange={(e) => setCourt(e.target.value)}
               placeholder="Superior Court, NY"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">Hearing date</label>
+            <input
+              type="date"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40 transition-all"
+              value={hearingDate}
+              onChange={(e) => setHearingDate(e.target.value)}
             />
           </div>
 
@@ -103,7 +119,7 @@ function NewCaseForm({ onClose }: NewCaseFormProps) {
             <button
               type="submit"
               disabled={mutation.isPending || !name.trim()}
-              className="flex-1 rounded-lg bg-[#1F3D6E] text-white px-4 py-2.5 text-sm font-medium hover:bg-[#163056] disabled:opacity-50 transition-colors"
+              className="flex-1 rounded-lg bg-brand text-white px-4 py-2.5 text-sm font-medium hover:bg-brand-hover disabled:opacity-50 transition-colors"
             >
               {mutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin mx-auto" />
@@ -194,6 +210,8 @@ export default function IndexPage() {
   const [activeCase, setActiveCase] = useState<Case | null>(null)
   const [showNewCase, setShowNewCase] = useState(false)
   const [deletingCaseId, setDeletingCaseId] = useState<string | null>(null)
+  const toast = useToast()
+  const confirm = useConfirm()
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteCase(id),
@@ -204,24 +222,27 @@ export default function IndexPage() {
 
   function handleSelectCase(c: Case) {
     setActiveCase(c)
+    navigate(`/dashboard/${c.id}`)
   }
 
-  function handleOpenDashboard() {
-    if (activeCase) navigate(`/dashboard/${activeCase.id}`)
-  }
+  const hasCases = (cases?.length ?? 0) > 0
 
   async function handleDeleteCase(c: Case) {
-    const confirmed = window.confirm(
-      `Delete case "${c.name}"? It will be archived and removed from your case list.`,
-    )
+    const confirmed = await confirm({
+      title: `Delete "${c.name}"?`,
+      message: 'The case will be archived and removed from your case list.',
+      confirmLabel: 'Delete case',
+      destructive: true,
+    })
     if (!confirmed) return
 
     setDeletingCaseId(c.id)
     try {
       await deleteMutation.mutateAsync(c.id)
       if (activeCase?.id === c.id) setActiveCase(null)
+      toast({ title: 'Case deleted', description: c.name, variant: 'success' })
     } catch {
-      window.alert('Failed to delete case. Please try again.')
+      toast({ title: 'Could not delete the case', description: 'Please try again.', variant: 'error' })
     } finally {
       setDeletingCaseId(null)
     }
@@ -237,7 +258,7 @@ export default function IndexPage() {
             </div>
             <div>
               <p className="text-sm font-bold text-white leading-tight">LexMind AI</p>
-              <p className="text-[11px] text-white/50 leading-tight">Legal Intelligence</p>
+              <p className="text-2xs text-white/50 leading-tight">Legal Intelligence</p>
             </div>
           </div>
         </div>
@@ -280,101 +301,32 @@ export default function IndexPage() {
         </div>
 
         <div className="px-5 py-4 border-t border-white/10">
-          <p className="text-[11px] text-white/30">Multi-Agent RAG System</p>
+          <p className="text-2xs text-white/30">Multi-Agent RAG System</p>
         </div>
       </aside>
 
       <main className="flex-1 flex flex-col items-center justify-center bg-slate-50 p-8 overflow-y-auto">
-        {!activeCase ? (
-          <div className="text-center max-w-lg">
-            <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-[#1F3D6E]/10 mx-auto mb-6">
-              <Scale className="h-10 w-10 text-[#1F3D6E]" />
-            </div>
-            <h1 className="text-3xl font-bold text-slate-900 mb-3 tracking-tight">
-              Legal Intelligence Platform
-            </h1>
-            <p className="text-slate-500 text-base mb-8 leading-relaxed">
-              Analyse case documents, detect risks, build timelines, and research precedents
-              with a multi-agent AI system built for legal professionals.
-            </p>
-            <button
-              type="button"
-              onClick={() => setShowNewCase(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#1F3D6E] text-white px-6 py-3 text-sm font-semibold hover:bg-[#163056] shadow-lg shadow-[#1F3D6E]/20 transition-all"
-            >
-              <Plus className="h-4 w-4" />
-              Create your first case
-            </button>
+        <div className="text-center max-w-lg">
+          <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-brand/10 mx-auto mb-6">
+            <Scale className="h-10 w-10 text-brand" />
           </div>
-        ) : (
-          <div className="w-full max-w-xl">
-            <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xl shadow-slate-200/50">
-              <div className="flex items-start justify-between gap-4 mb-6">
-                <div className="flex items-start gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#1F3D6E]/10 shrink-0">
-                    <FolderOpen className="h-6 w-6 text-[#1F3D6E]" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-bold text-slate-900">{activeCase.name}</h2>
-                    {activeCase.client && (
-                      <p className="text-sm text-slate-500 flex items-center gap-1.5 mt-1">
-                        <Users className="h-3.5 w-3.5" />
-                        {activeCase.client}
-                      </p>
-                    )}
-                    {activeCase.court && (
-                      <p className="text-sm text-slate-500 flex items-center gap-1.5 mt-0.5">
-                        <Gavel className="h-3.5 w-3.5" />
-                        {activeCase.court}
-                      </p>
-                    )}
-                    {activeCase.hearing_date && (
-                      <p className="text-sm text-slate-500 flex items-center gap-1.5 mt-0.5">
-                        <Calendar className="h-3.5 w-3.5" />
-                        Hearing: {activeCase.hearing_date}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteCase(activeCase)}
-                  disabled={deletingCaseId === activeCase.id}
-                  className="shrink-0 flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
-                >
-                  {deletingCaseId === activeCase.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  )}
-                  Delete
-                </button>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3 mb-6">
-                {[
-                  { label: 'Document Analysis', desc: 'RAG-powered Q&A' },
-                  { label: 'Risk Detection', desc: 'Automated review' },
-                  { label: 'Legal Research', desc: 'Precedent search' },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-center">
-                    <p className="text-xs font-semibold text-slate-700">{item.label}</p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">{item.desc}</p>
-                  </div>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                onClick={handleOpenDashboard}
-                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#1F3D6E] text-white px-5 py-3 text-sm font-semibold hover:bg-[#163056] shadow-md shadow-[#1F3D6E]/20 transition-all"
-              >
-                Open Case Workspace
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        )}
+          <h1 className="text-3xl font-bold text-slate-900 mb-3 tracking-tight">
+            Legal Intelligence Platform
+          </h1>
+          <p className="text-slate-500 text-base mb-8 leading-relaxed">
+            {hasCases
+              ? 'Open a case from the list to ask questions, review risks and prepare for hearings — or start a new matter.'
+              : 'Analyse case documents, detect risks, build timelines, and research precedents with a multi-agent AI system built for legal professionals.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowNewCase(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-brand text-white px-6 py-3 text-sm font-semibold hover:bg-brand-hover shadow-lg shadow-brand/20 transition-all"
+          >
+            <Plus className="h-4 w-4" />
+            {hasCases ? 'New case' : 'Create your first case'}
+          </button>
+        </div>
       </main>
 
       {showNewCase && <NewCaseForm onClose={() => setShowNewCase(false)} />}

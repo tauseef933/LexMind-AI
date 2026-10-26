@@ -34,6 +34,7 @@ function toChatMessage(row: Message): ChatMessage {
   return {
     id: row.id,
     role: row.role,
+    createdAt: row.created_at,
     content: row.content,
     sources: row.sources ?? undefined,
     agentTrace: results.map((r) => ({ agent: r.agent, status: r.error ? 'error' : 'done' })),
@@ -80,12 +81,13 @@ export function useStreaming(caseId: string | null): UseStreamingReturn {
       if (isStreaming) return
 
       const userId = crypto.randomUUID()
-      setMessages((prev) => [...prev, { id: userId, role: 'user', content }])
+      const now = new Date().toISOString()
+      setMessages((prev) => [...prev, { id: userId, role: 'user', content, createdAt: now }])
 
       const assistantId = crypto.randomUUID()
       setMessages((prev) => [
         ...prev,
-        { id: assistantId, role: 'assistant', content: '', isStreaming: true },
+        { id: assistantId, role: 'assistant', content: '', isStreaming: true, createdAt: now },
       ])
 
       setAgentTrace([])

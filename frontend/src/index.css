@@ -1,43 +1,69 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-@layer base {
-  :root {
-    --background: 210 20% 98%;
-    --foreground: 222 47% 11%;
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --primary: 216 56% 28%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 216 56% 95%;
-    --accent-foreground: 216 56% 28%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 216 56% 28%;
-    --radius: 0.625rem;
-  }
-}
-
-@layer base {
-  * { @apply border-border; }
-  body {
-    @apply bg-background text-foreground antialiased;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  }
-}
-
-@layer utilities {
-  .lex-gradient {
-    background: linear-gradient(135deg, #1F3D6E 0%, #2a5298 100%);
-  }
-  .lex-sidebar {
-    background: linear-gradient(180deg, #1a3359 0%, #1F3D6E 100%);
-  }
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens. Colours are space-separated channels so Tailwind can apply
+ * opacity, e.g. bg-brand/10. Change the brand here and it updates everywhere.
+ */
+@layer base {
+  :root {
+    /* Brand — LexMind navy */
+    --brand: 31 61 110;          /* #1F3D6E  primary actions, accents */
+    --brand-hover: 22 48 86;     /* #163056  hover / pressed */
+    --brand-deep: 21 41 74;      /* #15294A  sidebar top */
+    --brand-soft: 238 242 248;   /* #EEF2F8  tinted backgrounds */
+
+    /* Neutral surfaces (shadcn-style HSL, used by border/background tokens) */
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --primary: 216 56% 28%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 216 56% 95%;
+    --accent-foreground: 216 56% 28%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 216 56% 28%;
+    --radius: 0.625rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand/30 ring-offset-1;
+  }
+}
+
+@keyframes lex-slide-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+@layer utilities {
+  .lex-gradient {
+    background: linear-gradient(135deg, rgb(var(--brand)) 0%, #2a5298 100%);
+  }
+  .animate-in {
+    animation: lex-slide-in 160ms ease-out;
+  }
+  .lex-sidebar {
+    background: linear-gradient(180deg, rgb(var(--brand-deep)) 0%, rgb(var(--brand)) 100%);
+  }
+}

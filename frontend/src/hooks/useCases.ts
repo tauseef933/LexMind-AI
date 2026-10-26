@@ -1,6 +1,21 @@
 import { useQuery } from '@tanstack/react-query'
-import { getCases, getCase, getTimeline, getRisks, getSummary, getDocuments } from '@/lib/api'
-import type { Case, CaseSummary, Document, RisksResponse, TimelineResponse } from '@/lib/types'
+import {
+  getCases,
+  getCase,
+  getTimeline,
+  getRisks,
+  getSummary,
+  getDocuments,
+  getSuggestions,
+} from '@/lib/api'
+import type {
+  Case,
+  CaseSummary,
+  Document,
+  RisksResponse,
+  SuggestionsResponse,
+  TimelineResponse,
+} from '@/lib/types'
 
 // ─── All cases ────────────────────────────────────────────────────────────────
 
@@ -48,6 +63,19 @@ export function useTimeline(caseId: string | undefined) {
     queryFn: () => getTimeline(caseId!),
     enabled: !!caseId,
     staleTime: 5 * 60_000,
+  })
+}
+
+/**
+ * One-click questions tailored to the case's documents. Refetched when the
+ * number of indexed documents changes.
+ */
+export function useSuggestions(caseId: string | undefined, readyDocuments: number) {
+  return useQuery<SuggestionsResponse, Error>({
+    queryKey: ['suggestions', caseId, readyDocuments],
+    queryFn: () => getSuggestions(caseId!),
+    enabled: !!caseId && readyDocuments > 0,
+    staleTime: Infinity,
   })
 }
 

@@ -24,7 +24,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 _RULES: list[tuple[str, re.Pattern, int, int]] = [
     ("POST", re.compile(r"^/chat$"), 20, 60),
     ("POST", re.compile(r"^/upload$"), 30, 60),
-    ("GET", re.compile(r"^/cases/[^/]+/(summary|risks|timeline)$"), 15, 60),
+    ("GET", re.compile(r"^/cases/[^/]+/(summary|risks|timeline|suggestions)$"), 15, 60),
     ("POST", re.compile(r"^/cases/[^/]+/(prep|reports/pdf)$"), 10, 60),
 ]
 
