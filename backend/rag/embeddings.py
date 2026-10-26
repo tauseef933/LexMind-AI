@@ -1,17 +1,30 @@
 """
-Embedding helper — loads the SentenceTransformer model once at import time
-so every call reuses the same in-memory model.
+Embedding helper — ONNX MiniLM (same model as all-MiniLM-L6-v2).
+
+Uses Chroma's ONNXRuntime path instead of sentence-transformers/torch so the
+backend can start on Windows machines where Smart App Control blocks PyTorch.
 """
 
-from sentence_transformers import SentenceTransformer
+from __future__ import annotations
 
-_MODEL_NAME = "all-MiniLM-L6-v2"
+import logging
+from collections.abc import Sequence
+from functools import lru_cache
 
-# Loaded once; subsequent imports receive the cached module object.
-_model = SentenceTransformer(_MODEL_NAME)
+logger = logging.getLogger("lexmind.embeddings")
 
 
-def encode(texts: list[str]) -> list[list[float]]:
+@lru_cache(maxsize=1)
+def _encoder():
+    from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
+
+    logger.info("Loading ONNX MiniLM embedding model …")
+    return ONNXMiniLM_L6_V2()
+
+
+def encode(texts: list[str]) -> list[Sequence[float]]:
     """Return a list of embedding vectors, one per input text."""
-    vectors = _model.encode(texts, convert_to_numpy=True)
-    return [v.tolist() for v in vectors]
+    if not texts:
+        return []
+    vectors = _encoder()(texts)
+    return [list(map(float, v)) for v in vectors]

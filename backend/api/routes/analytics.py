@@ -2,7 +2,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from models.database import Billing, get_db
@@ -14,6 +14,8 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 # Pydantic schema
 # ---------------------------------------------------------------------------
 class BillingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     case_id: Optional[str]
     invoice_number: Optional[str]
@@ -23,9 +25,6 @@ class BillingOut(BaseModel):
     dispute_flag: Optional[bool]
     dispute_reason: Optional[str]
     status: Optional[str]
-
-    class Config:
-        from_attributes = True
 
 
 # ---------------------------------------------------------------------------

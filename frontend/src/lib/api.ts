@@ -16,12 +16,7 @@ import type {
 
 const BASE_URL =
   (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:8000";
-
-alert("BASE_URL = " + BASE_URL);
-
-console.log("VITE_API_URL:", import.meta.env.VITE_API_URL);
-console.log("BASE_URL:", BASE_URL);
+  'http://localhost:8000'
 
 export const apiClient = axios.create({
   baseURL: BASE_URL,
@@ -94,19 +89,28 @@ export async function deleteDocument(
 }
 
 // ─── Case intelligence ────────────────────────────────────────────────────────
+// These run one or more LLM calls server-side, so allow more than the default.
+
+const LLM_TIMEOUT = 120_000
 
 export async function getSummary(caseId: string): Promise<CaseSummary> {
-  const { data } = await apiClient.get<CaseSummary>(`/cases/${caseId}/summary`)
+  const { data } = await apiClient.get<CaseSummary>(`/cases/${caseId}/summary`, {
+    timeout: LLM_TIMEOUT,
+  })
   return data
 }
 
 export async function getTimeline(caseId: string): Promise<TimelineResponse> {
-  const { data } = await apiClient.get<TimelineResponse>(`/cases/${caseId}/timeline`)
+  const { data } = await apiClient.get<TimelineResponse>(`/cases/${caseId}/timeline`, {
+    timeout: LLM_TIMEOUT,
+  })
   return data
 }
 
 export async function getRisks(caseId: string): Promise<RisksResponse> {
-  const { data } = await apiClient.get<RisksResponse>(`/cases/${caseId}/risks`)
+  const { data } = await apiClient.get<RisksResponse>(`/cases/${caseId}/risks`, {
+    timeout: LLM_TIMEOUT,
+  })
   return data
 }
 
@@ -114,8 +118,20 @@ export async function startHearingPrep(
   caseId: string,
   hearingDate: string,
 ): Promise<HearingPrepResponse> {
-  const { data } = await apiClient.post<HearingPrepResponse>(`/cases/${caseId}/prep`, {
-    hearing_date: hearingDate,
+  const { data } = await apiClient.post<HearingPrepResponse>(
+    `/cases/${caseId}/prep`,
+    { hearing_date: hearingDate },
+    { timeout: LLM_TIMEOUT * 2 },
+  )
+  return data
+}
+
+export async function downloadReportPdf(
+  caseId: string,
+  report: { title: string; sections: { heading: string; content: string }[] },
+): Promise<Blob> {
+  const { data } = await apiClient.post<Blob>(`/cases/${caseId}/reports/pdf`, report, {
+    responseType: 'blob',
   })
   return data
 }

@@ -9,21 +9,16 @@ argument strategy into a structured prep sheet.
 
 import json
 import logging
-import os
 
-import chromadb
-from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy.orm import Session
 
+from llm import ask, get_llm, parse_json_response
 from models.database import Document, SessionLocal
 from services.case_summary import generate_summary
 from services.risk_detector import detect_risks
 
 logger = logging.getLogger("lexmind.hearing_prep")
-
-from config import GROQ_MODEL
-_CHROMA_PATH = os.getenv("CHROMA_PERSIST_PATH", "./chroma_db")
 
 _STRATEGY_SYSTEM = """You are a senior trial attorney preparing for a court hearing.
 Given the case summary, risks, and document list, produce a hearing preparation
@@ -67,11 +62,6 @@ def prepare_hearing(case_id: str, hearing_date: str) -> dict:
     # 2. Build strategy with Groq
     strategy: dict = {}
     try:
-        llm = ChatGroq(
-            model=GROQ_MODEL,
-            api_key=os.getenv("GROQ_API_KEY", ""),
-            temperature=0.1,
-        )
         context_payload = json.dumps({
             "hearing_date": hearing_date,
             "case_summary": summary,
@@ -80,20 +70,15 @@ def prepare_hearing(case_id: str, hearing_date: str) -> dict:
             "documents": document_list[:15],  # cap to avoid token overflow
         }, indent=2)
 
-        response = llm.invoke([
+        response = ask(get_llm(0.1), [
             SystemMessage(content=_STRATEGY_SYSTEM),
             HumanMessage(content=f"Case context:\n{context_payload}"),
         ])
-        raw = response.content.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        strategy = json.loads(raw.strip())
+        strategy = parse_json_response(response)
 
-    except Exception as exc:
-        logger.error("Hearing strategy generation failed: %s", exc, exc_info=True)
-        strategy = {"error": str(exc)}
+    except Exception:
+        logger.exception("Hearing strategy generation failed")
+        strategy = {"error": "Hearing strategy generation failed."}
 
     return {
         "hearing_date": hearing_date,

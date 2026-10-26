@@ -1,0 +1,35 @@
+# One-command local run:
+#   cp backend/.env.example backend/.env   # add your GROQ / COHERE / SERPER keys
+#   docker compose up --build
+# Frontend: http://localhost:5173   API: http://localhost:8000/docs
+
+services:
+  backend:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      # Override paths from .env so data lands on the volume
+      DATABASE_URL: sqlite:////data/lexmind.db
+      CHROMA_PERSIST_PATH: /data/chroma
+      UPLOADS_DIR: /data/uploads
+      ALLOWED_ORIGINS: http://localhost:5173
+    ports:
+      - "8000:8000"
+    volumes:
+      - lexmind-data:/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  lexmind-data:

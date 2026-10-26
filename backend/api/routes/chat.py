@@ -1,41 +1,37 @@
 """
 POST /chat — SSE streaming chat endpoint.
 
-Stream sequence:
+Stream sequence (all events come live from the orchestrator):
   1. {"type": "agent_trace", "step": {"agent": "orchestrator", "status": "routing"}}
-  2. Per-agent firing events
-  3. {"type": "token", "content": "word "} — response word-by-word
-  4. {"type": "done", "sources": [...]}
+  2. {"type": "agent_trace", "step": {"agent": "<agent>", "status": "running" | "done" | "error"}}
+  3. {"type": "token", "content": "..."} — answer text as the LLM generates it
+  4. {"type": "done", "sources": [...], "actions": [...]}
 
-Persists completed message to SQLite messages table.
+The last few messages of the case are sent along as conversation history so
+follow-up questions ("what about the second clause?") are understood.
+
+Persists both messages to the SQLite messages table.
 """
 
 import json
 import logging
 import uuid
-from datetime import datetime
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import iterate_in_threadpool, run_in_threadpool
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from agents.orchestrator import process
-from models.database import Message, get_db
+from agents.orchestrator import stream_events
+from models.database import Case, Message, SessionLocal, get_db, utcnow
+from models.message import ChatRequest
 
 logger = logging.getLogger("lexmind.chat")
 
 router = APIRouter(tags=["chat"])
 
-
-# ---------------------------------------------------------------------------
-# Request schema
-# ---------------------------------------------------------------------------
-class ChatRequest(BaseModel):
-    content: str
-    case_id: str
-    case_name: str = "Unknown Case"
+_HISTORY_MESSAGES = 6   # earlier messages passed to the orchestrator
 
 
 # ---------------------------------------------------------------------------
@@ -46,97 +42,103 @@ def _sse(payload: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Persistence helpers
+# ---------------------------------------------------------------------------
+def _save_message(message: Message) -> None:
+    # The request-scoped session from Depends(get_db) is closed before a
+    # StreamingResponse body runs, so each write uses its own session.
+    db = SessionLocal()
+    try:
+        db.add(message)
+        db.commit()
+    except Exception:
+        logger.exception("Failed to persist %s message", message.role)
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _recent_history(db: Session, case_id: str) -> list[dict]:
+    rows = (
+        db.query(Message)
+        .filter(Message.case_id == case_id)
+        .order_by(Message.created_at.desc())
+        .limit(_HISTORY_MESSAGES)
+        .all()
+    )
+    return [
+        {"role": row.role or "user", "content": row.content or ""}
+        for row in reversed(rows)
+        if row.content
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Streaming generator
 # ---------------------------------------------------------------------------
-async def _stream_chat(
-    request: ChatRequest,
-    db: Session,
-) -> AsyncGenerator[str, None]:
+async def _stream_chat(request: ChatRequest, history: list[dict]) -> AsyncGenerator[str, None]:
     # Persist user message immediately so history survives refresh
-    user_msg_id = str(uuid.uuid4())
-    try:
-        user_msg = Message(
-            id=user_msg_id,
-            case_id=request.case_id,
-            role="user",
-            content=request.content,
-            agent_trace=None,
-            sources=None,
-            created_at=datetime.utcnow(),
-        )
-        db.add(user_msg)
-        db.commit()
-    except Exception as exc:
-        logger.error("Failed to persist user message: %s", exc)
-        db.rollback()
+    await run_in_threadpool(_save_message, Message(
+        id=str(uuid.uuid4()),
+        case_id=request.case_id,
+        role="user",
+        content=request.content,
+        agent_trace=None,
+        sources=None,
+        created_at=utcnow(),
+    ))
 
-    # Step a — routing notice
-    yield _sse({
-        "type": "agent_trace",
-        "step": {"agent": "orchestrator", "status": "routing"},
-    })
-
-    # Run orchestrator synchronously (LangGraph is sync; SSE wrapper is async)
+    # The LangGraph pipeline is sync — each step of the generator runs in a
+    # worker thread so the event loop keeps serving other requests.
+    events = stream_events(
+        query=request.content,
+        case_id=request.case_id,
+        case_name=request.case_name,
+        history=history,
+    )
+    final: dict = {}
     try:
-        result = process(
-            query=request.content,
-            case_id=request.case_id,
-            case_name=request.case_name,
-        )
-    except Exception as exc:
-        logger.error("Orchestrator error: %s", exc, exc_info=True)
-        yield _sse({"type": "error", "content": str(exc)})
+        async for event in iterate_in_threadpool(events):
+            if event["type"] == "final":
+                final = event
+            else:
+                yield _sse(event)
+    except Exception:
+        logger.exception("Orchestrator error")
+        yield _sse({"type": "error", "content": "Something went wrong while answering. Please try again."})
         return
 
-    agent_trace: list[dict] = result.get("agent_trace", [])
-    sources: list = result.get("sources", [])
-    response_text: str = result.get("response", "")
-
-    # Step b — per-agent firing events
-    for agent_result in agent_trace:
-        agent_name = agent_result.get("agent", "unknown")
-        status = "error" if "error" in agent_result else "done"
-        yield _sse({
-            "type": "agent_trace",
-            "step": {"agent": agent_name, "status": status},
-        })
-
-    # Step c — stream response word-by-word
-    words = response_text.split(" ")
-    for word in words:
-        yield _sse({"type": "token", "content": word + " "})
-
-    # Step d — done event with sources
-    yield _sse({"type": "done", "sources": sources})
+    yield _sse({
+        "type": "done",
+        "sources": final.get("sources", []),
+        "actions": final.get("actions", []),
+    })
 
     # Persist assistant message to SQLite
-    try:
-        msg = Message(
-            id=str(uuid.uuid4()),
-            case_id=request.case_id,
-            role="assistant",
-            content=response_text,
-            agent_trace=json.dumps(agent_trace),
-            sources=json.dumps(sources),
-            created_at=datetime.utcnow(),
-        )
-        db.add(msg)
-        db.commit()
-    except Exception as exc:
-        logger.error("Failed to persist assistant message: %s", exc)
-        db.rollback()
+    await run_in_threadpool(_save_message, Message(
+        id=str(uuid.uuid4()),
+        case_id=request.case_id,
+        role="assistant",
+        content=final.get("response", ""),
+        agent_trace=json.dumps(final.get("agent_trace", []), default=str),
+        sources=json.dumps(final.get("sources", []), default=str),
+        created_at=utcnow(),
+    ))
 
 
 # ---------------------------------------------------------------------------
 # Route
 # ---------------------------------------------------------------------------
 @router.post("/chat")
-async def chat(
+def chat(
     request: ChatRequest,
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
+    if not db.query(Case.id).filter(Case.id == request.case_id).first():
+        raise HTTPException(status_code=404, detail="Case not found")
+    history = _recent_history(db, request.case_id)
     return StreamingResponse(
-        _stream_chat(request, db),
+        _stream_chat(request, history),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -1,9 +1,14 @@
+import hmac
 import logging
 import os
+import re
 import time
+import uuid
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from logging_setup import request_id_var
 
 logger = logging.getLogger("lexmind")
 
@@ -16,21 +21,37 @@ def get_allowed_origins() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Request logging middleware
+# Request logging middleware — assigns a request ID, logs method/path/timing
 # ---------------------------------------------------------------------------
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
 class LoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
+        # Reuse a caller-supplied ID (e.g. from a proxy) if it looks sane
+        incoming = request.headers.get("X-Request-ID", "")
+        request_id = incoming if _REQUEST_ID.match(incoming) else uuid.uuid4().hex[:16]
+        token = request_id_var.set(request_id)
         start = time.perf_counter()
-        response = await call_next(request)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        logger.info(
-            "%s %s → %s  (%.1f ms)",
-            request.method,
-            request.url.path,
-            response.status_code,
-            elapsed_ms,
-        )
-        return response
+        try:
+            response = await call_next(request)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            response.headers["X-Request-ID"] = request_id
+            logger.info(
+                "%s %s → %s  (%.1f ms)",
+                request.method,
+                request.url.path,
+                response.status_code,
+                elapsed_ms,
+                extra={"method": request.method, "path": request.url.path,
+                       "status": response.status_code, "duration_ms": round(elapsed_ms, 1)},
+            )
+            return response
+        except Exception:
+            logger.exception("%s %s → unhandled error", request.method, request.url.path)
+            raise
+        finally:
+            request_id_var.reset(token)
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +76,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         provided = request.headers.get("X-API-Key", "")
-        if provided != self._key:
+        if not hmac.compare_digest(provided.encode(), self._key.encode()):
             return Response(
                 content='{"detail":"Invalid or missing API key"}',
                 status_code=401,

@@ -1,57 +1,74 @@
 import config  # noqa: F401 — load .env before anything reads env vars
 
 import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
 
 from api.middleware import (
     APIKeyMiddleware,
     LoggingMiddleware,
     get_allowed_origins,
 )
+from api.rate_limit import RateLimitMiddleware
 from api.routes import analytics, cases, chat, documents
-from config import UPLOADS_DIR, auth_enabled, get_secret_key
-from models.database import init_db
+from config import auth_enabled, get_secret_key
+from logging_setup import configure_logging
+from models.database import Document, get_db, init_db
+from storage import resolve_stored_file
 
 # ---------------------------------------------------------------------------
-# Logging
+# Logging (LOG_FORMAT=json for structured logs; every line carries a request ID)
 # ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+configure_logging()
 logger = logging.getLogger("lexmind")
 
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    logger.info("Initialising database …")
+    init_db()
+    logger.info("LexMind AI ready.")
+    yield
+
+
 app = FastAPI(
     title="LexMind AI",
     description="Multi-Agent RAG System for Legal Professionals",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # ---------------------------------------------------------------------------
-# Middleware  (order matters — added last executes first)
+# Middleware  (added last = outermost). Request flow:
+#   LoggingMiddleware → CORSMiddleware → APIKeyMiddleware → RateLimitMiddleware → routes
+# CORS wraps auth and rate limiting so 401/429 responses still carry CORS
+# headers for the browser.
 # ---------------------------------------------------------------------------
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=get_allowed_origins(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.add_middleware(LoggingMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 if auth_enabled():
     app.add_middleware(APIKeyMiddleware, secret_key=get_secret_key())
     logger.info("API key auth enabled.")
 else:
     logger.info("API key auth disabled (local dev).")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Request-ID", "Content-Disposition"],
+)
+
+app.add_middleware(LoggingMiddleware)
 
 # ---------------------------------------------------------------------------
 # File serving — uploaded documents for the document viewer
@@ -69,11 +86,18 @@ _MIME_TYPES = {
 
 
 @app.get("/uploads/{case_id}/{filename}", tags=["uploads"])
-async def serve_upload(case_id: str, filename: str):
-    file_path = UPLOADS_DIR / case_id / filename
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-    suffix = file_path.suffix.lower()
+def serve_upload(case_id: str, filename: str, db: Session = Depends(get_db)):
+    # Only serve files that belong to a known document of this case.
+    doc = (
+        db.query(Document)
+        .filter(Document.case_id == case_id, Document.filename == filename)
+        .order_by(Document.ingested_at.desc())
+        .first()
+    )
+    file_path = resolve_stored_file(doc) if doc else None
+    if file_path is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    suffix = Path(filename).suffix.lower()
     media_type = _MIME_TYPES.get(suffix, "application/octet-stream")
     return FileResponse(
         path=str(file_path),
@@ -89,16 +113,6 @@ app.include_router(chat.router)
 app.include_router(cases.router)
 app.include_router(documents.router)
 app.include_router(analytics.router)
-
-# ---------------------------------------------------------------------------
-# Startup
-# ---------------------------------------------------------------------------
-@app.on_event("startup")
-async def on_startup() -> None:
-    logger.info("Initialising database …")
-    init_db()
-    logger.info("LexMind AI ready.")
-
 
 # ---------------------------------------------------------------------------
 # Health

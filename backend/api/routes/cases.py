@@ -1,44 +1,20 @@
 import json
+import re
 import uuid
-from datetime import date, datetime
-from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
-from models.database import Case, Message, get_db
+from models.case import CaseCreate, CaseOut, PrepRequest, ReportRequest
+from models.database import Case, Message, get_db, utcnow
+from models.message import MessageOut
 from services.case_summary import generate_summary
 from services.risk_detector import detect_risks
 from services.timeline_builder import build_timeline
 from services.hearing_prep import prepare_hearing
+from services.report_pdf import render_report_pdf
 
 router = APIRouter(prefix="/cases", tags=["cases"])
-
-
-# ---------------------------------------------------------------------------
-# Pydantic schemas
-# ---------------------------------------------------------------------------
-class CaseCreate(BaseModel):
-    name: str
-    client: Optional[str] = None
-    court: Optional[str] = None
-    hearing_date: Optional[date] = None
-    status: Optional[str] = "active"
-
-
-class CaseOut(BaseModel):
-    id: str
-    name: str
-    client: Optional[str]
-    court: Optional[str]
-    hearing_date: Optional[date]
-    status: str
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +30,7 @@ def list_cases(db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @router.post("", response_model=CaseOut, status_code=201)
 def create_case(payload: CaseCreate, db: Session = Depends(get_db)):
-    now = datetime.utcnow()
+    now = utcnow()
     case = Case(
         id=str(uuid.uuid4()),
         name=payload.name,
@@ -91,7 +67,7 @@ def archive_case(case_id: str, db: Session = Depends(get_db)):
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     case.status = "archived"
-    case.updated_at = datetime.utcnow()
+    case.updated_at = utcnow()
     db.commit()
     return {"id": case_id, "status": "archived"}
 
@@ -99,19 +75,6 @@ def archive_case(case_id: str, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # GET /cases/{id}/messages — chat history for a case
 # ---------------------------------------------------------------------------
-class MessageOut(BaseModel):
-    id: str
-    case_id: Optional[str]
-    role: str
-    content: str
-    agent_trace: Optional[list[dict[str, Any]]] = None
-    sources: Optional[list[dict[str, Any]]] = None
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
 @router.get("/{case_id}/messages", response_model=list[MessageOut])
 def list_messages(case_id: str, db: Session = Depends(get_db)):
     _require_case(case_id, db)
@@ -129,11 +92,11 @@ def list_messages(case_id: str, db: Session = Depends(get_db)):
             MessageOut(
                 id=row.id,
                 case_id=row.case_id,
-                role=row.role,
-                content=row.content,
+                role=row.role or "assistant",
+                content=row.content or "",
                 agent_trace=agent_trace,
                 sources=sources,
-                created_at=row.created_at,
+                created_at=row.created_at or utcnow(),
             )
         )
     return out
@@ -169,14 +132,29 @@ def case_risks(case_id: str, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # POST /cases/{id}/prep
 # ---------------------------------------------------------------------------
-class PrepRequest(BaseModel):
-    hearing_date: str  # e.g. "2026-09-15"
-
-
 @router.post("/{case_id}/prep")
 def case_prep(case_id: str, body: PrepRequest, db: Session = Depends(get_db)):
     _require_case(case_id, db)
     return prepare_hearing(case_id, body.hearing_date)
+
+
+# ---------------------------------------------------------------------------
+# POST /cases/{id}/reports/pdf — render a reviewed report draft as a PDF
+# ---------------------------------------------------------------------------
+@router.post("/{case_id}/reports/pdf", response_class=Response)
+def case_report_pdf(case_id: str, body: ReportRequest, db: Session = Depends(get_db)):
+    case = _require_case(case_id, db)
+    pdf = render_report_pdf(
+        title=body.title,
+        case_name=case.name,
+        sections=[s.model_dump() for s in body.sections],
+    )
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", body.title).strip("-")[:60] or "report"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{slug}.pdf"'},
+    )
 
 
 # ---------------------------------------------------------------------------

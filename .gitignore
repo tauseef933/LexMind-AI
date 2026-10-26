@@ -31,6 +31,10 @@ node_modules/
 frontend/dist/
 frontend/.vite/
 *.local
+*.tsbuildinfo
+
+# ── Evaluation output ───────────────────────────────────────────────────────
+eval-results.json
 
 # ── IDE & OS ─────────────────────────────────────────────────────────────────
 .idea/

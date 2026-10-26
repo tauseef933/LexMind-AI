@@ -7,6 +7,11 @@ Import this module before any code that reads os.environ for paths/keys.
 import os
 from pathlib import Path
 
+# Must run before langchain / langgraph imports (they require xxhash).
+from compat import ensure_xxhash
+
+ensure_xxhash()
+
 from dotenv import load_dotenv
 
 BACKEND_ROOT = Path(__file__).resolve().parent
@@ -22,7 +27,8 @@ for _env_file in (BACKEND_ROOT / ".env", PROJECT_ROOT / ".env"):
     if _env_file.is_file():
         load_dotenv(_env_file, override=True)
 
-UPLOADS_DIR = PROJECT_ROOT / "uploads"
+_uploads = Path(os.getenv("UPLOADS_DIR", "uploads"))
+UPLOADS_DIR = _uploads if _uploads.is_absolute() else PROJECT_ROOT / _uploads
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 

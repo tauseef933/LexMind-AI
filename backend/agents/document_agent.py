@@ -8,16 +8,19 @@ run(query, case_id) → dict
 """
 
 import logging
-import os
 import re
+from typing import Optional
 
-from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from llm import TokenCallback, ask_streaming, get_llm
 from rag.retrieval import hybrid_retrieve
 from rag.reranker import rerank
 
 logger = logging.getLogger("lexmind.document_agent")
+
+_CANDIDATES = 20      # chunks pulled by hybrid retrieval
+_CONTEXT_CHUNKS = 5   # chunks kept after reranking and sent to the LLM
 
 # ---------------------------------------------------------------------------
 # Exact RAG prompt from spec
@@ -40,8 +43,6 @@ Rules:
 4. Use precise legal language
 5. Structure the response with clear headings if listing multiple points
 """
-
-from config import GROQ_MODEL
 
 
 def _build_context(chunks: list[dict]) -> str:
@@ -75,10 +76,10 @@ def _verify_sources(answer: str, chunks: list[dict]) -> list[dict]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def run(query: str, case_id: str) -> dict:
+def run(query: str, case_id: str, on_token: Optional[TokenCallback] = None) -> dict:
     try:
-        # 1. Hybrid retrieval
-        candidates = hybrid_retrieve(query, case_id, top_k=10)
+        # 1. Hybrid retrieval (wide net), then 2. rerank down to the best few
+        candidates = hybrid_retrieve(query, case_id, top_k=_CANDIDATES)
         if not candidates:
             return {
                 "answer": "No documents have been ingested for this case yet.",
@@ -86,8 +87,7 @@ def run(query: str, case_id: str) -> dict:
                 "agent": "document_agent",
             }
 
-        # 2. Rerank → top 3
-        top_chunks = rerank(query, candidates, top_n=3)
+        top_chunks = rerank(query, candidates, top_n=_CONTEXT_CHUNKS)
 
         # 3. Build context and fill prompt
         context = _build_context(top_chunks)
@@ -98,18 +98,12 @@ def run(query: str, case_id: str) -> dict:
             page="{page}",
         )
 
-        # 4. Call Groq
-        llm = ChatGroq(
-            model=GROQ_MODEL,
-            api_key=os.getenv("GROQ_API_KEY", ""),
-            temperature=0,
-        )
+        # 4. Call Groq (streams tokens to on_token when given)
         messages = [
             SystemMessage(content="You are a precise legal document analyst."),
             HumanMessage(content=filled_prompt),
         ]
-        response = llm.invoke(messages)
-        answer: str = response.content
+        answer = ask_streaming(get_llm(0), messages, on_token)
 
         # 5. Hallucination guard — verify citations exist in retrieved chunks
         verified_sources = _verify_sources(answer, top_chunks)
@@ -121,6 +115,6 @@ def run(query: str, case_id: str) -> dict:
             "agent": "document_agent",
         }
 
-    except Exception as exc:
-        logger.error("document_agent error: %s", exc, exc_info=True)
-        return {"error": str(exc), "agent": "document_agent"}
+    except Exception:
+        logger.exception("document_agent error")
+        return {"error": "Document analysis failed.", "agent": "document_agent"}

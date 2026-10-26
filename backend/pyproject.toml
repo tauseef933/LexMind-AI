@@ -1,0 +1,36 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = ["compat/xxhash_shim.py"]
+
+[tool.ruff.lint]
+# pyflakes, pycodestyle, isort-free bugbear subset, pyupgrade, simplify
+select = ["F", "E", "W", "B", "UP", "SIM"]
+ignore = [
+    "E402",   # config must be imported before other modules (loads .env)
+    "UP007",  # keep Optional[...] — it matches the existing Pydantic schemas
+    "UP045",
+    "B008",   # FastAPI's Depends(...) in argument defaults is idiomatic
+    "B905",   # zip() over Chroma's parallel result lists — lengths always match
+    "SIM108", # if/else blocks are often clearer than ternaries
+    "E501",   # long prompt strings; line length is advisory
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+markers = [
+    "slow: uses the real embedding model and ChromaDB (deselect with -m 'not slow')",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.mypy]
+python_version = "3.11"
+# Modules import each other as top-level packages (run from backend/)
+mypy_path = "$MYPY_CONFIG_FILE_DIR"
+explicit_package_bases = true
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+exclude = ["^migrations/", "^\\.venv/"]

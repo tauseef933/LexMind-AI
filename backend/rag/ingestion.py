@@ -2,52 +2,69 @@
 Document ingestion pipeline.
 
 Flow:
-  1. Extract text page-by-page with PyMuPDF (fitz).
+  1. Extract text page-by-page with PyMuPDF (fitz), or python-docx for .docx.
   2. Fall back to Tesseract OCR for any blank pages (scanned images).
-  3. Split text into chunks with RecursiveCharacterTextSplitter
-     (chunk_size=500, overlap=50).
-  4. Embed chunks with SentenceTransformer via embeddings.encode().
+  3. Split each page into chunks (chunk_size=500, overlap=50), so every
+     chunk carries its exact page number for citations.
+  4. Embed chunks via ONNX MiniLM (embeddings.encode).
   5. Upsert into ChromaDB collection "case_{case_id}".
 """
 
 import logging
-import os
 from pathlib import Path
 
-import chromadb
+import docx  # python-docx
 import fitz  # PyMuPDF
+from chromadb.api.types import Metadata
 import pytesseract
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from PIL import Image  # Pillow — bundled with pytesseract
 
 from rag.embeddings import encode
+from rag.retrieval import invalidate_case
+from rag.text_splitter import split_text
+from rag.vector_store import get_case_collection, get_or_create_case_collection
 
 logger = logging.getLogger("lexmind.ingestion")
-
-# ---------------------------------------------------------------------------
-# ChromaDB client — persistent storage at CHROMA_PERSIST_PATH
-# ---------------------------------------------------------------------------
-_CHROMA_PATH = os.getenv("CHROMA_PERSIST_PATH", "./chroma_db")
-_chroma_client = chromadb.PersistentClient(path=_CHROMA_PATH)
-
-# ---------------------------------------------------------------------------
-# Text splitter — shared across calls
-# ---------------------------------------------------------------------------
-_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=500,
-    chunk_overlap=50,
-    length_function=len,
-)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+def _extract_docx(file_path: str) -> list[tuple[int, str]]:
+    """
+    Word files have no fixed pages, so the whole document is page 1.
+    Paragraphs and table rows are kept in document order.
+    """
+    document = docx.Document(file_path)
+    lines: list[str] = []
+    for block in document.element.body.iterchildren():
+        tag = block.tag.rsplit("}", 1)[-1]
+        if tag == "p":
+            text = "".join(node.text or "" for node in block.iter() if node.tag.endswith("}t")).strip()
+            if text:
+                lines.append(text)
+        elif tag == "tbl":
+            for row in block.iter():
+                if row.tag.endswith("}tr"):
+                    cells = [
+                        "".join(n.text or "" for n in cell.iter() if n.tag.endswith("}t")).strip()
+                        for cell in row.iterchildren() if cell.tag.endswith("}tc")
+                    ]
+                    if any(cells):
+                        lines.append(" | ".join(cells))
+    text = "\n".join(lines)
+    return [(1, f"[PAGE 1]\n{text}\n")] if text else [(1, "")]
+
+
 def _extract_pages(file_path: str) -> list[tuple[int, str]]:
     """
     Return a list of (page_number, text) tuples (1-indexed).
-    Pages with no selectable text are OCR-ed via Tesseract.
+    PDFs and images go through PyMuPDF; pages with no selectable text are
+    OCR-ed via Tesseract. DOCX files are read with python-docx.
     """
+    if Path(file_path).suffix.lower() == ".docx":
+        return _extract_docx(file_path)
+
     doc = fitz.open(file_path)
     pages: list[tuple[int, str]] = []
 
@@ -57,7 +74,7 @@ def _extract_pages(file_path: str) -> list[tuple[int, str]]:
         if not text:
             # Render page to image and run OCR
             pix = page.get_pixmap(dpi=200)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             text = pytesseract.image_to_string(img).strip()
 
         formatted = f"[PAGE {page_num}]\n{text}\n" if text else ""
@@ -67,14 +84,6 @@ def _extract_pages(file_path: str) -> list[tuple[int, str]]:
     return pages
 
 
-def _get_or_create_collection(case_id: str) -> chromadb.Collection:
-    collection_name = f"case_{case_id}"
-    return _chroma_client.get_or_create_collection(
-        name=collection_name,
-        metadata={"hnsw:space": "cosine"},
-    )
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -82,6 +91,7 @@ def ingest_document(
     file_path: str,
     case_id: str,
     doc_id: str,
+    filename: str | None = None,
 ) -> dict:
     """
     Ingest a document into the vector store.
@@ -91,62 +101,45 @@ def ingest_document(
     file_path : str   Absolute path to the saved file.
     case_id   : str   UUID of the owning case.
     doc_id    : str   UUID of the document record in SQLite.
+    filename  : str   Original filename shown in citations (defaults to the
+                      on-disk name).
 
     Returns
     -------
-    {"chunks_stored": N, "doc_id": doc_id}
+    {"chunks_stored": N, "page_count": P, "doc_id": doc_id}
     """
-    filename = Path(file_path).name
+    filename = filename or Path(file_path).name
     logger.info("Ingesting doc_id=%s  file=%s  case=%s", doc_id, filename, case_id)
 
     # 1. Extract pages
     pages = _extract_pages(file_path)
 
-    # 2. Build full text with page markers, track page per character range
-    all_text = ""
-    page_boundaries: list[tuple[int, int, int]] = []  # (start_char, end_char, page_num)
+    # 2–3. Split each page on its own so every chunk belongs to exactly one
+    # page — citations then point at the right page in the viewer.
+    chunks: list[str] = []
+    chunk_pages: list[int] = []
     for page_num, page_text in pages:
-        start = len(all_text)
-        all_text += page_text
-        end = len(all_text)
-        page_boundaries.append((start, end, page_num))
+        for chunk in split_text(page_text, chunk_size=500, chunk_overlap=50):
+            chunks.append(chunk)
+            chunk_pages.append(page_num)
 
-    # 3. Split into chunks
-    chunks = _splitter.split_text(all_text)
     if not chunks:
         logger.warning("No text extracted from %s", filename)
-        return {"chunks_stored": 0, "doc_id": doc_id}
-
-    # Helper: find which page a chunk's starting character falls on
-    def _page_for_offset(offset: int) -> int:
-        for start, end, page_num in page_boundaries:
-            if start <= offset < end:
-                return page_num
-        return 1
-
-    # Reconstruct chunk start offsets (approximate via cumulative search)
-    chunk_offsets: list[int] = []
-    cursor = 0
-    for chunk in chunks:
-        idx = all_text.find(chunk[:50], cursor)  # anchor on first 50 chars
-        if idx == -1:
-            idx = cursor
-        chunk_offsets.append(idx)
-        cursor = idx + len(chunk)
+        return {"chunks_stored": 0, "page_count": len(pages), "doc_id": doc_id}
 
     # 4. Embed all chunks in one batch
     embeddings = encode(chunks)
 
     # 5. Upsert into ChromaDB
-    collection = _get_or_create_collection(case_id)
+    collection = get_or_create_case_collection(case_id)
 
     ids = [f"{doc_id}_chunk_{i}" for i in range(len(chunks))]
-    metadatas = [
+    metadatas: list[Metadata] = [
         {
             "doc_id": doc_id,
             "case_id": case_id,
             "chunk_index": i,
-            "page_number": _page_for_offset(chunk_offsets[i]),
+            "page_number": chunk_pages[i],
             "filename": filename,
         }
         for i in range(len(chunks))
@@ -159,20 +152,21 @@ def ingest_document(
         metadatas=metadatas,
     )
 
+    invalidate_case(case_id)
     logger.info("Stored %d chunks for doc_id=%s", len(chunks), doc_id)
-    return {"chunks_stored": len(chunks), "doc_id": doc_id}
+    return {"chunks_stored": len(chunks), "page_count": len(pages), "doc_id": doc_id}
 
 
 def delete_document_chunks(case_id: str, doc_id: str) -> int:
     """Remove all ChromaDB chunks for a document. Returns count deleted."""
-    try:
-        collection = _chroma_client.get_collection(f"case_{case_id}")
-    except Exception:
+    collection = get_case_collection(case_id)
+    if collection is None:
         return 0
 
     results = collection.get(where={"doc_id": doc_id}, include=[])
     ids = results.get("ids") or []
     if ids:
         collection.delete(ids=ids)
+        invalidate_case(case_id)
         logger.info("Deleted %d chunks for doc_id=%s", len(ids), doc_id)
     return len(ids)

@@ -17,6 +17,9 @@ export interface Document {
   filename: string
   file_type: string | null
   page_count: number | null
+  status: 'pending' | 'processing' | 'ready' | 'failed' | null
+  error: string | null
+  chunk_count: number | null
   ingested_at: string
 }
 
@@ -25,7 +28,9 @@ export interface Message {
   case_id: string | null
   role: 'user' | 'assistant'
   content: string
-  agent_trace: AgentTraceStep[] | null   // parsed from JSON string
+  // Full per-agent result objects (parsed from JSON string); each has an
+  // `agent` key, `error` on failure, and `action_type`/`action` for drafts
+  agent_trace: Array<Record<string, unknown> & { agent: string }> | null
   sources: Source[] | null               // parsed from JSON string
   created_at: string
 }
@@ -41,7 +46,7 @@ export type AgentName =
 
 export interface AgentTraceStep {
   agent: AgentName | string
-  status: 'routing' | 'done' | 'error' | string
+  status: 'routing' | 'running' | 'done' | 'error' | string
 }
 
 export interface Source {
@@ -50,7 +55,40 @@ export interface Source {
   filename: string
   page_number: number
   chunk_index: number
+  score?: number
 }
+
+// ─── Drafted actions (nothing is executed until the user acts) ──────────────
+
+export interface EmailAction {
+  action_type: 'email'
+  to: string
+  subject: string
+  body: string
+}
+
+export interface CalendarAction {
+  action_type: 'calendar'
+  title: string
+  start: string | null   // ISO local date-time, e.g. "2026-11-03T10:00"
+  end: string | null
+  location: string
+  attendees: string[]
+  description: string
+}
+
+export interface ReportSection {
+  heading: string
+  content: string
+}
+
+export interface ReportAction {
+  action_type: 'pdf_report'
+  title: string
+  sections: ReportSection[]
+}
+
+export type DraftAction = EmailAction | CalendarAction | ReportAction
 
 // ─── SSE event payloads ───────────────────────────────────────────────────────
 
@@ -67,6 +105,7 @@ export interface SSEToken {
 export interface SSEDone {
   type: 'done'
   sources: Source[]
+  actions?: DraftAction[]
 }
 
 export interface SSEError {
@@ -84,6 +123,7 @@ export interface ChatMessage {
   content: string
   sources?: Source[]
   agentTrace?: AgentTraceStep[]
+  actions?: DraftAction[]
   isStreaming?: boolean
 }
 

@@ -9,14 +9,15 @@ run(query, case_id) → dict
 
 import logging
 import os
+from typing import Optional
 
 import requests
-from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
+
+from llm import TokenCallback, ask_streaming, get_llm
 
 logger = logging.getLogger("lexmind.research_agent")
 
-from config import GROQ_MODEL
 _SERPER_URL = "https://google.serper.dev/search"
 
 _SYSTEM = """You are a senior legal researcher. Using the provided search results,
@@ -71,7 +72,7 @@ def _build_context(results: list[dict]) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def run(query: str, case_id: str) -> dict:
+def run(query: str, case_id: str, on_token: Optional[TokenCallback] = None) -> dict:
     try:
         # 1. Web search
         results = _serper_search(query)
@@ -83,23 +84,16 @@ def run(query: str, case_id: str) -> dict:
             context = _build_context(results)
 
         # 2. Synthesise with Groq
-        llm = ChatGroq(
-            model=GROQ_MODEL,
-            api_key=os.getenv("GROQ_API_KEY", ""),
-            temperature=0.1,
-        )
-
         prompt = (
             f"Legal research question: {query}\n\n"
             f"Case context (ID): {case_id}\n\n"
             f"Web search results:\n{context}"
         )
 
-        response = llm.invoke([
+        answer = ask_streaming(get_llm(0.1), [
             SystemMessage(content=_SYSTEM),
             HumanMessage(content=prompt),
-        ])
-        answer: str = response.content
+        ], on_token)
 
         logger.info("research_agent answered query for case %s, sources=%d", case_id, len(source_urls))
         return {
@@ -108,6 +102,6 @@ def run(query: str, case_id: str) -> dict:
             "agent": "research_agent",
         }
 
-    except Exception as exc:
-        logger.error("research_agent error: %s", exc, exc_info=True)
-        return {"error": str(exc), "agent": "research_agent"}
+    except Exception:
+        logger.exception("research_agent error")
+        return {"error": "Legal research failed.", "agent": "research_agent"}

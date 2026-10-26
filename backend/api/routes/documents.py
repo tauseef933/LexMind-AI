@@ -1,17 +1,16 @@
 import logging
 import os
 import uuid
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from config import UPLOADS_DIR
-from models.database import Case, Document, get_db
+from models.database import Case, Document, SessionLocal, get_db, utcnow
+from models.document import DocumentOut, UploadOut
 from rag.ingestion import delete_document_chunks, ingest_document
+from storage import is_uuid, resolve_stored_file, stored_path
 
 logger = logging.getLogger("lexmind.documents")
 
@@ -23,36 +22,50 @@ router = APIRouter(tags=["documents"])
 _MAX_MB = float(os.getenv("MAX_FILE_SIZE_MB", "50"))
 _MAX_BYTES = int(_MAX_MB * 1024 * 1024)
 
-_ALLOWED_TYPES = {
-    "application/pdf": "pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-    "image/jpeg": "jpeg",
-    "image/png": "png",
-    "image/tiff": "tiff",
-    "image/webp": "webp",
-}
-
 _ALLOWED_EXTENSIONS = {".pdf", ".docx", ".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp"}
 
 
 # ---------------------------------------------------------------------------
-# Pydantic schemas
+# Background ingestion — records progress on the document row
 # ---------------------------------------------------------------------------
-class DocumentOut(BaseModel):
-    id: str
-    case_id: Optional[str]
-    filename: str
-    file_type: Optional[str]
-    page_count: Optional[int]
-    ingested_at: datetime
+def _set_document_fields(doc_id: str, **fields: Any) -> None:
+    db = SessionLocal()
+    try:
+        doc = db.get(Document, doc_id)
+        if doc is None:  # deleted while ingesting
+            return
+        for name, value in fields.items():
+            setattr(doc, name, value)
+        db.commit()
+    finally:
+        db.close()
 
-    class Config:
-        from_attributes = True
 
+def _run_ingestion(file_path: str, case_id: str, doc_id: str, filename: str) -> None:
+    _set_document_fields(doc_id, status="processing")
+    try:
+        result = ingest_document(file_path=file_path, case_id=case_id, doc_id=doc_id, filename=filename)
+    except Exception:
+        logger.exception("Ingestion failed for doc_id=%s", doc_id)
+        _set_document_fields(doc_id, status="failed", error="Could not read this document.")
+        return
 
-class UploadOut(BaseModel):
-    doc_id: str
-    status: str
+    if result["chunks_stored"] == 0:
+        _set_document_fields(
+            doc_id,
+            status="failed",
+            error="No text could be extracted from this document.",
+            page_count=result.get("page_count"),
+            chunk_count=0,
+        )
+    else:
+        _set_document_fields(
+            doc_id,
+            status="ready",
+            error=None,
+            page_count=result.get("page_count"),
+            chunk_count=result["chunks_stored"],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -81,13 +94,16 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    # Verify the case exists
-    case = db.query(Case).filter(Case.id == case_id).first()
+    # Verify the case exists (ids are UUIDs — reject anything else early)
+    case = db.query(Case).filter(Case.id == case_id).first() if is_uuid(case_id) else None
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
+    # Keep only the final path component of the client-supplied name
+    original_name = Path((file.filename or "").replace("\\", "/")).name
+
     # Validate extension
-    suffix = Path(file.filename or "").suffix.lower()
+    suffix = Path(original_name).suffix.lower()
     if suffix not in _ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=415,
@@ -105,34 +121,35 @@ async def upload_document(
     # Determine stored file type
     file_type = suffix.lstrip(".")
 
-    # Persist file to {PROJECT_ROOT}/uploads/{case_id}/
-    upload_dir = UPLOADS_DIR / case_id
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    dest = upload_dir / (file.filename or f"upload{suffix}")
+    # Persist file to {PROJECT_ROOT}/uploads/{case_id}/{doc_id}{suffix}
+    doc_id = str(uuid.uuid4())
+    dest = stored_path(case_id, doc_id, suffix)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(contents)
 
     # Insert document row in SQLite (page_count filled after ingestion)
-    doc_id = str(uuid.uuid4())
     doc = Document(
         id=doc_id,
         case_id=case_id,
-        filename=file.filename or dest.name,
+        filename=original_name or f"upload{suffix}",
         file_type=file_type,
         page_count=None,
-        ingested_at=datetime.utcnow(),
+        status="pending",
+        ingested_at=utcnow(),
     )
     db.add(doc)
     db.commit()
 
     # Kick off ingestion in the background
     background_tasks.add_task(
-        ingest_document,
+        _run_ingestion,
         file_path=str(dest.resolve()),
         case_id=case_id,
         doc_id=doc_id,
+        filename=doc.filename,
     )
 
-    logger.info("Upload accepted: doc_id=%s  file=%s  case=%s", doc_id, file.filename, case_id)
+    logger.info("Upload accepted: doc_id=%s  file=%s  case=%s", doc_id, doc.filename, case_id)
     return UploadOut(doc_id=doc_id, status="ingestion_started")
 
 
@@ -149,10 +166,22 @@ def delete_document(case_id: str, doc_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Remove file from disk
-    file_path = UPLOADS_DIR / case_id / doc.filename
-    if file_path.is_file():
-        file_path.unlink()
+    # Remove file from disk. Legacy uploads were stored under their original
+    # name, so keep the file if another document of this case still uses it.
+    file_path = resolve_stored_file(doc)
+    if file_path is not None:
+        shared = file_path.stem != doc.id and (
+            db.query(Document)
+            .filter(
+                Document.case_id == case_id,
+                Document.filename == doc.filename,
+                Document.id != doc.id,
+            )
+            .first()
+            is not None
+        )
+        if not shared:
+            file_path.unlink()
 
     # Remove vector chunks
     chunks_deleted = delete_document_chunks(case_id, doc_id)

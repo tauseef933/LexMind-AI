@@ -29,6 +29,7 @@ export default function DocumentViewer({ caseId, filename, page, onClose }: Docu
   const encodedName = encodeURIComponent(filename)
   const fileUrl = `${BASE_URL}/uploads/${encodeURIComponent(caseId)}/${encodedName}`
   const isPdf = filename.toLowerCase().endsWith('.pdf')
+  const isDocx = filename.toLowerCase().endsWith('.docx')
 
   useEffect(() => {
     setCurrentPage(page)
@@ -127,6 +128,19 @@ export default function DocumentViewer({ caseId, filename, page, onClose }: Docu
                 className="shadow-lg rounded-sm overflow-hidden"
               />
             </Document>
+          </div>
+        ) : isDocx ? (
+          // Browsers cannot render Word files inline
+          <div className="flex flex-col items-center gap-3 py-12 text-center">
+            <FileText className="h-8 w-8 text-slate-400" />
+            <p className="text-sm text-slate-600">Word documents can't be previewed in the browser.</p>
+            <a
+              href={fileUrl}
+              download={filename}
+              className="rounded-lg bg-[#1F3D6E] px-3 py-2 text-xs font-medium text-white hover:bg-[#163056]"
+            >
+              Download {filename}
+            </a>
           </div>
         ) : (
           <iframe

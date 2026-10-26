@@ -2,21 +2,31 @@
 LangGraph orchestrator for LexMind AI.
 
 Flow:
-  route_query → run_agents_parallel → merge_results → END
+  contextualize_query → route_query → run_agents_parallel → merge_results → END
+
+Nodes report progress through LangGraph's custom stream channel, so callers
+of stream_events() receive, in order:
+  {"type": "agent_trace", "step": {"agent": ..., "status": ...}}   live agent status
+  {"type": "token", "content": "..."}                             answer text as it is generated
+  {"type": "final", "response": ..., "agent_trace": [...], "sources": [...], "actions": [...]}
+
+Concatenating every "token" content gives exactly final["response"].
 
 Exported symbols:
-  orchestrator  — compiled LangGraph graph
-  process(query, case_id, case_name) → dict
+  orchestrator                                   — compiled LangGraph graph
+  stream_events(query, case_id, case_name, history) → iterator of events above
+  process(query, case_id, case_name, history)    → final event (no streaming)
 """
 
-import json
+import contextvars
 import logging
-import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import TypedDict
+import queue
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Optional, TypedDict, cast
 
-from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
 
 from agents import (
@@ -25,10 +35,9 @@ from agents import (
     document_agent,
     research_agent,
 )
+from llm import ask, get_llm, parse_json_response
 
 logger = logging.getLogger("lexmind.orchestrator")
-
-from config import GROQ_MODEL
 
 # ---------------------------------------------------------------------------
 # Exact routing prompt from spec
@@ -66,6 +75,13 @@ Respond with:
 }}
 """
 
+_REWRITE_SYSTEM = """You rewrite follow-up questions in a legal case chat.
+Given the recent conversation and the user's latest message, rewrite the latest
+message as a single standalone question that can be understood without the
+conversation (resolve pronouns like "it", "that clause", "the second one").
+If it is already standalone, return it unchanged.
+Output ONLY the rewritten question."""
+
 # ---------------------------------------------------------------------------
 # Agent registry
 # ---------------------------------------------------------------------------
@@ -76,56 +92,88 @@ _AGENT_MAP = {
     "research_agent":  research_agent,
 }
 
-_DEFAULT_SUBTASK = [
-    {"agent": "document_agent", "priority": 1}
-]
+# Agents whose run() accepts on_token and streams its answer
+_STREAMING_AGENTS = {"document_agent", "research_agent"}
+
+_LABELS = {
+    "document_agent":  "Document Analysis",
+    "analytics_agent": "Analytics & Billing",
+    "research_agent":  "Legal Research",
+    "action_agent":    "Proposed Actions",
+}
+
+_SECTION_SEPARATOR = "\n\n---\n\n"
+_HISTORY_CHARS = 1500   # per message, when building the rewrite prompt
 
 
 # ---------------------------------------------------------------------------
 # LangGraph state
 # ---------------------------------------------------------------------------
 class AgentState(TypedDict):
-    query:          str
+    query:          str           # user's message as typed
     case_id:        str
     case_name:      str
+    history:        list[dict]    # earlier messages: {"role", "content"}
+    standalone:     str           # query rewritten to stand on its own
     subtasks:       list[dict]
-    results:        list[dict]
+    results:        list[dict]    # one per subtask, in display order
+    lead_text:      str           # lead section body exactly as streamed
     final_response: str
 
 
+def _emit(writer: Any, agent: str, status: str) -> None:
+    writer({"type": "agent_trace", "step": {"agent": agent, "status": status}})
+
+
 # ---------------------------------------------------------------------------
-# Node 1 — route_query
+# Node 1 — contextualize_query (conversation memory)
 # ---------------------------------------------------------------------------
-def route_query(state: AgentState) -> AgentState:
-    query     = state["query"]
+def contextualize_query(state: AgentState) -> dict:
+    history = state["history"]
+    query = state["query"]
+    if not history:
+        return {"standalone": query}
+
+    transcript = "\n".join(
+        f"{m['role'].upper()}: {m['content'][:_HISTORY_CHARS]}" for m in history
+    )
+    try:
+        rewritten = ask(get_llm(0), [
+            SystemMessage(content=_REWRITE_SYSTEM),
+            HumanMessage(content=f"Conversation:\n{transcript}\n\nLatest message: {query}"),
+        ])
+        standalone = rewritten.strip().strip('"') or query
+    except Exception:
+        logger.exception("Query rewrite failed — using the message as typed")
+        standalone = query
+
+    if standalone != query:
+        logger.info("Rewrote follow-up %r → %r", query[:80], standalone[:80])
+    return {"standalone": standalone}
+
+
+# ---------------------------------------------------------------------------
+# Node 2 — route_query
+# ---------------------------------------------------------------------------
+def route_query(state: AgentState) -> dict:
+    writer = get_stream_writer()
+    _emit(writer, "orchestrator", "routing")
+
+    query     = state["standalone"]
     case_id   = state["case_id"]
     case_name = state["case_name"]
 
     try:
-        llm = ChatGroq(
-            model=GROQ_MODEL,
-            api_key=os.getenv("GROQ_API_KEY", ""),
-            temperature=0,
-        )
         filled = ROUTING_PROMPT.format(
             query=query,
             case_name=case_name,
             case_id=case_id,
         )
-        response = llm.invoke([
+        response = ask(get_llm(0), [
             SystemMessage(content="You are a routing orchestrator. Output ONLY valid JSON."),
             HumanMessage(content=filled),
         ])
-        raw = response.content.strip()
-
-        # Strip accidental markdown fences
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        raw = raw.strip()
-
-        parsed = json.loads(raw)
+        parsed = parse_json_response(response)
         subtasks: list[dict] = parsed.get("subtasks", [])
 
         # Validate: keep only tasks that map to a known agent
@@ -143,93 +191,136 @@ def route_query(state: AgentState) -> AgentState:
         logger.warning("Routing failed (%s) — falling back to document_agent.", exc)
         subtasks = [{"agent": "document_agent", "query": query, "priority": 1}]
 
-    state["subtasks"] = subtasks
-    return state
+    # The first streaming-capable agent is shown first so its answer can
+    # stream live; the others follow in priority order.
+    lead = next((i for i, t in enumerate(subtasks) if t["agent"] in _STREAMING_AGENTS), None)
+    if lead:
+        subtasks.insert(0, subtasks.pop(lead))
+
+    _emit(writer, "orchestrator", "done")
+    for task in subtasks:
+        _emit(writer, task["agent"], "running")
+    return {"subtasks": subtasks}
 
 
 # ---------------------------------------------------------------------------
-# Node 2 — run_agents_parallel
+# Section formatting (shared by streaming and the final merge)
 # ---------------------------------------------------------------------------
-def run_agents_parallel(state: AgentState) -> AgentState:
+def _section_body(result: dict) -> str:
+    agent_name = result.get("agent", "unknown")
+
+    if "error" in result:
+        return f"⚠️ {result['error']}"
+
+    if agent_name == "analytics_agent":
+        rows = result.get("data", [])
+        hint = f"\n\n*Report:* `{result.get('report', '')}` — {len(rows)} row(s)." if rows else ""
+        return f"{result.get('answer', '')}{hint}"
+
+    if agent_name == "research_agent":
+        sources = result.get("sources", [])
+        src_text = ("\n\n**Sources:**\n" + "\n".join(f"- {s}" for s in sources)) if sources else ""
+        return f"{result.get('answer', '')}{src_text}"
+
+    if agent_name == "action_agent":
+        return (
+            f"*Type:* {result.get('action_type', 'action')}\n\n{result.get('preview', '')}\n\n"
+            "⚠️ **Nothing has been sent. Review the draft and use the buttons below to act on it.**"
+        )
+
+    return result.get("answer") or result.get("preview") or ""
+
+
+def _section_header(agent_name: str, multi: bool) -> str:
+    if not multi:
+        return ""
+    label = _LABELS.get(agent_name, agent_name.replace("_", " ").title())
+    return f"## {label}\n"
+
+
+# ---------------------------------------------------------------------------
+# Node 3 — run_agents_parallel
+# ---------------------------------------------------------------------------
+def run_agents_parallel(state: AgentState) -> dict:
+    writer = get_stream_writer()
     subtasks = state["subtasks"]
     case_id  = state["case_id"]
-    results: list[dict] = []
+    multi = len(subtasks) > 1
+    lead_streams = subtasks[0]["agent"] in _STREAMING_AGENTS
 
-    def _run_one(task: dict) -> dict:
+    # Worker threads report here; this thread forwards to the stream writer
+    events: queue.Queue = queue.Queue()
+
+    def _run_one(index: int, task: dict) -> None:
         agent_name = task["agent"]
-        agent_query = task.get("query", state["query"])
-        module = _AGENT_MAP.get(agent_name)
-        if module is None:
-            return {"error": f"Unknown agent: {agent_name}", "agent": agent_name}
-        logger.debug("Running %s  query=%r", agent_name, agent_query[:80])
-        return module.run(agent_query, case_id)
+        module = _AGENT_MAP[agent_name]
+        agent_query = task.get("query") or state["standalone"]
+        try:
+            if index == 0 and lead_streams:
+                result = module.run(agent_query, case_id, on_token=lambda t: events.put(("token", index, t)))
+            else:
+                result = module.run(agent_query, case_id)
+        except Exception:
+            logger.exception("Agent %s raised", agent_name)
+            result = {"error": "Agent failed unexpectedly.", "agent": agent_name}
+        events.put(("done", index, result))
 
-    # Run all subtasks in parallel
+    results: list[Optional[dict]] = [None] * len(subtasks)
+    streamed = ""   # lead section text already sent to the client
+
+    writer({"type": "token", "content": _section_header(subtasks[0]["agent"], multi)})
+
     with ThreadPoolExecutor(max_workers=len(subtasks)) as executor:
-        future_to_task = {executor.submit(_run_one, t): t for t in subtasks}
-        for future in as_completed(future_to_task):
-            try:
-                results.append(future.result())
-            except Exception as exc:
-                task = future_to_task[future]
-                logger.error("Agent %s raised: %s", task.get("agent"), exc, exc_info=True)
-                results.append({"error": str(exc), "agent": task.get("agent", "unknown")})
+        for i, task in enumerate(subtasks):
+            # copy_context keeps the request ID on agent log lines
+            executor.submit(contextvars.copy_context().run, _run_one, i, task)
 
-    state["results"] = results
-    return state
+        pending = len(subtasks)
+        while pending:
+            kind, index, payload = events.get()
+            if kind == "token":
+                streamed += payload
+                writer({"type": "token", "content": payload})
+                continue
+
+            pending -= 1
+            results[index] = payload
+            _emit(writer, payload.get("agent", subtasks[index]["agent"]),
+                  "error" if "error" in payload else "done")
+
+            if index == 0:
+                # Send whatever part of the lead section was not streamed
+                # (e.g. research sources, an error, or a non-streaming agent)
+                body = _section_body(payload)
+                if body.startswith(streamed):
+                    rest = body[len(streamed):]
+                else:
+                    rest = "\n\n" + body
+                if rest:
+                    writer({"type": "token", "content": rest})
+                streamed += rest
+
+    # Remaining sections, in display order, once everything has finished
+    for result, task in zip(results[1:], subtasks[1:]):
+        assert result is not None
+        writer({
+            "type": "token",
+            "content": _SECTION_SEPARATOR + _section_header(task["agent"], multi) + _section_body(result),
+        })
+
+    return {"results": results, "lead_text": streamed}
 
 
 # ---------------------------------------------------------------------------
-# Node 3 — merge_results
+# Node 4 — merge_results
 # ---------------------------------------------------------------------------
-def merge_results(state: AgentState) -> AgentState:
+def merge_results(state: AgentState) -> dict:
+    """Build the final text exactly as it was streamed, for persistence."""
     results = state["results"]
-    sections: list[str] = []
-
-    _LABELS = {
-        "document_agent":  "Document Analysis",
-        "analytics_agent": "Analytics & Billing",
-        "research_agent":  "Legal Research",
-        "action_agent":    "Proposed Actions",
-    }
-
-    for result in results:
-        agent_name = result.get("agent", "unknown")
-        label = _LABELS.get(agent_name, agent_name.replace("_", " ").title())
-
-        if "error" in result:
-            sections.append(f"## {label}\n⚠️ {result['error']}")
-            continue
-
-        # Each agent returns different keys — normalise to a text block
-        if agent_name == "document_agent":
-            sections.append(f"## {label}\n{result.get('answer', '')}")
-
-        elif agent_name == "analytics_agent":
-            rows = result.get("data", [])
-            table_hint = f"\n*SQL:* `{result.get('sql', '')}` — {len(rows)} row(s) returned." if rows else ""
-            sections.append(f"## {label}\n{result.get('answer', '')}{table_hint}")
-
-        elif agent_name == "research_agent":
-            sources = result.get("sources", [])
-            src_text = ("\n\n**Sources:**\n" + "\n".join(f"- {s}" for s in sources)) if sources else ""
-            sections.append(f"## {label}\n{result.get('answer', '')}{src_text}")
-
-        elif agent_name == "action_agent":
-            preview   = result.get("preview", "")
-            act_type  = result.get("action_type", "action")
-            sections.append(
-                f"## {label}\n*Type:* {act_type}\n\n{preview}\n\n"
-                f"⚠️ **This action requires your confirmation before execution.**"
-            )
-
-        else:
-            # Generic fallback
-            text = result.get("answer") or result.get("preview") or str(result)
-            sections.append(f"## {label}\n{text}")
-
-    state["final_response"] = "\n\n---\n\n".join(sections)
-    return state
+    multi = len(results) > 1
+    sections = [_section_header(results[0].get("agent", ""), multi) + state["lead_text"]]
+    sections += [_section_header(r.get("agent", ""), multi) + _section_body(r) for r in results[1:]]
+    return {"final_response": _SECTION_SEPARATOR.join(sections)}
 
 
 # ---------------------------------------------------------------------------
@@ -237,12 +328,14 @@ def merge_results(state: AgentState) -> AgentState:
 # ---------------------------------------------------------------------------
 _graph = StateGraph(AgentState)
 
+_graph.add_node("contextualize_query", contextualize_query)
 _graph.add_node("route_query",         route_query)
 _graph.add_node("run_agents_parallel", run_agents_parallel)
 _graph.add_node("merge_results",       merge_results)
 
-_graph.set_entry_point("route_query")
+_graph.set_entry_point("contextualize_query")
 
+_graph.add_edge("contextualize_query", "route_query")
 _graph.add_edge("route_query",         "run_agents_parallel")
 _graph.add_edge("run_agents_parallel", "merge_results")
 _graph.add_edge("merge_results",       END)
@@ -253,41 +346,74 @@ orchestrator = _graph.compile()
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def process(query: str, case_id: str, case_name: str) -> dict:
-    """
-    Run the full orchestrator pipeline.
-
-    Returns
-    -------
-    {
-        "response":    str,          # merged final answer
-        "agent_trace": list[dict],   # raw per-agent result dicts
-        "sources":     list,         # deduplicated sources across all agents
-    }
-    """
-    initial_state: AgentState = {
-        "query":          query,
-        "case_id":        case_id,
-        "case_name":      case_name,
-        "subtasks":       [],
-        "results":        [],
-        "final_response": "",
-    }
-
-    final_state: AgentState = orchestrator.invoke(initial_state)
+def _final_event(state: dict) -> dict:
+    results: list[dict] = state.get("results") or []
 
     # Collect sources from all agents that emit them
     sources: list = []
     seen_sources: set = set()
-    for result in final_state.get("results", []):
+    for result in results:
         for src in result.get("sources", []):
             key = str(src)
             if key not in seen_sources:
                 seen_sources.add(key)
                 sources.append(src)
 
+    actions = [
+        {"action_type": r.get("action_type"), **(r.get("action") or {})}
+        for r in results
+        if r.get("agent") == "action_agent" and "error" not in r
+    ]
+
     return {
-        "response":    final_state["final_response"],
-        "agent_trace": final_state.get("results", []),
+        "type":        "final",
+        "response":    state.get("final_response", ""),
+        "agent_trace": results,
         "sources":     sources,
+        "actions":     actions,
     }
+
+
+def stream_events(
+    query: str,
+    case_id: str,
+    case_name: str,
+    history: Optional[list[dict]] = None,
+) -> Iterator[dict]:
+    """Run the pipeline, yielding progress/token events and then the final event."""
+    initial_state: AgentState = {
+        "query":          query,
+        "case_id":        case_id,
+        "case_name":      case_name,
+        "history":        history or [],
+        "standalone":     query,
+        "subtasks":       [],
+        "results":        [],
+        "lead_text":      "",
+        "final_response": "",
+    }
+
+    last_state: dict = {}
+    for mode, raw_chunk in orchestrator.stream(initial_state, stream_mode=["custom", "values"]):
+        chunk = cast(dict, raw_chunk)
+        if mode == "custom":
+            if chunk.get("type") != "token" or chunk.get("content"):
+                yield chunk
+        else:
+            last_state = chunk
+
+    yield _final_event(last_state)
+
+
+def process(
+    query: str,
+    case_id: str,
+    case_name: str,
+    history: Optional[list[dict]] = None,
+) -> dict:
+    """Run the full pipeline without streaming; returns the final event."""
+    final: dict = {}
+    for event in stream_events(query, case_id, case_name, history):
+        if event["type"] == "final":
+            final = event
+    return final

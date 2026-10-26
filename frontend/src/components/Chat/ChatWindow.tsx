@@ -10,10 +10,12 @@ import {
   MessageSquare,
   CheckCircle2,
   Trash2,
+  Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStreaming } from '@/hooks/useStreaming'
 import { deleteDocument, getDocuments, uploadDocument } from '@/lib/api'
+import CaseDashboard from '@/components/Dashboard/CaseDashboard'
 import MessageBubble from './MessageBubble'
 import AgentTrace from './AgentTrace'
 import DocumentViewer from './DocumentViewer'
@@ -36,8 +38,22 @@ export default function ChatWindow({ activeCase }: ChatWindowProps) {
   const { messages, agentTrace, isStreaming, historyLoading, sendMessage } = useStreaming(caseId)
   const [input, setInput] = useState('')
   const [uploads, setUploads] = useState<UploadState[]>([])
-  const [viewer, setViewer] = useState<{ filename: string; page: number } | null>(null)
+  const [viewer, setViewerState] = useState<{ filename: string; page: number } | null>(null)
+  const [showInsights, setShowInsights] = useState(false)
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null)
+
+  // The document viewer and the insights panel share the right-hand column
+  const setViewer = useCallback((next: { filename: string; page: number } | null) => {
+    setViewerState(next)
+    if (next) setShowInsights(false)
+  }, [])
+
+  function toggleInsights() {
+    setShowInsights((open) => {
+      if (!open) setViewerState(null)
+      return !open
+    })
+  }
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -48,6 +64,11 @@ export default function ChatWindow({ activeCase }: ChatWindowProps) {
     queryKey: ['documents', caseId],
     queryFn: () => getDocuments(caseId!),
     enabled: !!caseId,
+    // Poll while any document is still being ingested
+    refetchInterval: (query) =>
+      query.state.data?.some((d) => d.status === 'pending' || d.status === 'processing')
+        ? 2000
+        : false,
   })
 
   useEffect(() => {
@@ -128,9 +149,12 @@ export default function ChatWindow({ activeCase }: ChatWindowProps) {
     }
   }
 
-  const handleCitationClick = useCallback((filename: string, page: number) => {
-    setViewer({ filename, page })
-  }, [])
+  const handleCitationClick = useCallback(
+    (filename: string, page: number) => {
+      setViewer({ filename, page })
+    },
+    [setViewer],
+  )
 
   if (!activeCase) {
     return (
@@ -184,7 +208,19 @@ export default function ChatWindow({ activeCase }: ChatWindowProps) {
                 )}
               >
                 <FileText className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span className="truncate font-medium">{doc.filename}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{doc.filename}</span>
+                  {(doc.status === 'pending' || doc.status === 'processing') && (
+                    <span className="flex items-center gap-1 text-[10px] text-blue-600">
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> Indexing…
+                    </span>
+                  )}
+                  {doc.status === 'failed' && (
+                    <span className="block truncate text-[10px] text-red-600" title={doc.error ?? undefined}>
+                      {doc.error ?? 'Indexing failed'}
+                    </span>
+                  )}
+                </span>
               </button>
               <button
                 type="button"
@@ -222,6 +258,18 @@ export default function ChatWindow({ activeCase }: ChatWindowProps) {
             <MessageSquare className="h-3 w-3" />
             {messages.length}
           </div>
+          <button
+            type="button"
+            onClick={toggleInsights}
+            aria-pressed={showInsights}
+            className={cn(
+              'flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors',
+              showInsights ? 'bg-white text-[#1F3D6E]' : 'bg-white/10 text-white hover:bg-white/20',
+            )}
+          >
+            <Sparkles className="h-3 w-3" />
+            Insights
+          </button>
         </div>
 
         {uploads.length > 0 && (
@@ -285,6 +333,7 @@ export default function ChatWindow({ activeCase }: ChatWindowProps) {
             <MessageBubble
               key={msg.id}
               message={msg}
+              caseId={activeCase.id}
               onCitationClick={handleCitationClick}
             />
           ))}
@@ -364,6 +413,12 @@ export default function ChatWindow({ activeCase }: ChatWindowProps) {
             page={viewer.page}
             onClose={() => setViewer(null)}
           />
+        </div>
+      )}
+
+      {showInsights && (
+        <div className="w-[38%] min-w-[320px] shrink-0 flex flex-col overflow-hidden border-l border-slate-200">
+          <CaseDashboard activeCase={activeCase} onClose={() => setShowInsights(false)} />
         </div>
       )}
     </div>

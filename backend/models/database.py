@@ -1,21 +1,13 @@
 import os
 import uuid
-from datetime import datetime
+from collections.abc import Iterator
+from datetime import UTC, date, datetime
+from typing import Optional
 
 import config  # noqa: F401 — load .env before reading DATABASE_URL
 
-from sqlalchemy import (
-    Boolean,
-    Column,
-    Date,
-    DateTime,
-    Float,
-    ForeignKey,
-    Integer,
-    Text,
-    create_engine,
-)
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy import ForeignKey, Text, create_engine, inspect
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./lexmind.db")
 
@@ -28,7 +20,16 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 class Base(DeclarativeBase):
-    pass
+    type_annotation_map = {str: Text}
+
+
+def utcnow() -> datetime:
+    """Current UTC time as a naive datetime (SQLite stores no timezone)."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _new_id() -> str:
+    return str(uuid.uuid4())
 
 
 # ---------------------------------------------------------------------------
@@ -37,14 +38,14 @@ class Base(DeclarativeBase):
 class Case(Base):
     __tablename__ = "cases"
 
-    id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
-    name = Column(Text, nullable=False)
-    client = Column(Text)
-    court = Column(Text)
-    hearing_date = Column(Date)
-    status = Column(Text, default="active")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
+    name: Mapped[str]
+    client: Mapped[Optional[str]]
+    court: Mapped[Optional[str]]
+    hearing_date: Mapped[Optional[date]]
+    status: Mapped[Optional[str]] = mapped_column(default="active")
+    created_at: Mapped[Optional[datetime]] = mapped_column(default=utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
 # ---------------------------------------------------------------------------
@@ -53,12 +54,16 @@ class Case(Base):
 class Document(Base):
     __tablename__ = "documents"
 
-    id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
-    case_id = Column(Text, ForeignKey("cases.id"))
-    filename = Column(Text, nullable=False)
-    file_type = Column(Text)
-    page_count = Column(Integer)
-    ingested_at = Column(DateTime, default=datetime.utcnow)
+    id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
+    case_id: Mapped[Optional[str]] = mapped_column(ForeignKey("cases.id"), index=True)
+    filename: Mapped[str]
+    file_type: Mapped[Optional[str]]
+    page_count: Mapped[Optional[int]]
+    # pending | processing | ready | failed  (pre-existing rows default to ready)
+    status: Mapped[str] = mapped_column(default="pending", server_default="ready")
+    error: Mapped[Optional[str]]
+    chunk_count: Mapped[Optional[int]]
+    ingested_at: Mapped[Optional[datetime]] = mapped_column(default=utcnow)
 
 
 # ---------------------------------------------------------------------------
@@ -67,13 +72,13 @@ class Document(Base):
 class Message(Base):
     __tablename__ = "messages"
 
-    id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
-    case_id = Column(Text, ForeignKey("cases.id"))
-    role = Column(Text)
-    content = Column(Text)
-    agent_trace = Column(Text)   # JSON string
-    sources = Column(Text)       # JSON string
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
+    case_id: Mapped[Optional[str]] = mapped_column(ForeignKey("cases.id"), index=True)
+    role: Mapped[Optional[str]]
+    content: Mapped[Optional[str]]
+    agent_trace: Mapped[Optional[str]]   # JSON string
+    sources: Mapped[Optional[str]]       # JSON string
+    created_at: Mapped[Optional[datetime]] = mapped_column(default=utcnow)
 
 
 # ---------------------------------------------------------------------------
@@ -82,21 +87,21 @@ class Message(Base):
 class Billing(Base):
     __tablename__ = "billing"
 
-    id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
-    case_id = Column(Text, ForeignKey("cases.id"))
-    invoice_number = Column(Text)
-    amount = Column(Float)
-    hours = Column(Float)
-    invoice_date = Column(Date)
-    dispute_flag = Column(Boolean, default=False)
-    dispute_reason = Column(Text)
-    status = Column(Text, default="paid")
+    id: Mapped[str] = mapped_column(primary_key=True, default=_new_id)
+    case_id: Mapped[Optional[str]] = mapped_column(ForeignKey("cases.id"), index=True)
+    invoice_number: Mapped[Optional[str]]
+    amount: Mapped[Optional[float]]
+    hours: Mapped[Optional[float]]
+    invoice_date: Mapped[Optional[date]]
+    dispute_flag: Mapped[Optional[bool]] = mapped_column(default=False)
+    dispute_reason: Mapped[Optional[str]]
+    status: Mapped[Optional[str]] = mapped_column(default="paid")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def get_db():
+def get_db() -> Iterator[Session]:
     """FastAPI dependency — yields a database session and closes it after use."""
     db = SessionLocal()
     try:
@@ -105,9 +110,24 @@ def get_db():
         db.close()
 
 
-def init_db():
-    """Create all tables if they do not already exist."""
-    Base.metadata.create_all(bind=engine)
+_BASELINE_REVISION = "0001"
+
+
+def init_db() -> None:
+    """Bring the database schema up to date by running Alembic migrations."""
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(config.BACKEND_ROOT / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
+
+    # Databases created before migrations existed (via create_all) already
+    # have the baseline tables — mark them as such instead of re-creating.
+    insp = inspect(engine)
+    if insp.has_table("cases") and not insp.has_table("alembic_version"):
+        command.stamp(cfg, _BASELINE_REVISION)
+
+    command.upgrade(cfg, "head")
 
 
 # ---------------------------------------------------------------------------

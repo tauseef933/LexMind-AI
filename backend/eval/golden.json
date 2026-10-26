@@ -1,0 +1,27 @@
+[
+  {"question": "Who are the two companies signing the NDA?", "file": "Northwind-Quillon-NDA.pdf", "page": 1, "keywords": ["Northwind", "Quillon"]},
+  {"question": "When does the non-disclosure agreement start?", "file": "Northwind-Quillon-NDA.pdf", "page": 1, "keywords": ["14 March 2025"]},
+  {"question": "What business project are the NDA parties exploring together?", "file": "Northwind-Quillon-NDA.pdf", "page": 1, "keywords": ["drone"]},
+  {"question": "Does supplier pricing count as protected information under the NDA?", "file": "Northwind-Quillon-NDA.pdf", "page": 2, "keywords": ["supplier pricing"]},
+  {"question": "Is information that was already public excluded from protection?", "file": "Northwind-Quillon-NDA.pdf", "page": 2, "keywords": ["public"]},
+  {"question": "Which staff members may receive the confidential material?", "file": "Northwind-Quillon-NDA.pdf", "page": 3, "keywords": ["need to know"]},
+  {"question": "How long do the NDA secrecy duties last after the contract ends?", "file": "Northwind-Quillon-NDA.pdf", "page": 3, "keywords": ["five"]},
+  {"question": "How are trade secrets treated differently regarding duration?", "file": "Northwind-Quillon-NDA.pdf", "page": 3, "keywords": ["trade secret"]},
+  {"question": "How many days does the recipient have to give back documents?", "file": "Northwind-Quillon-NDA.pdf", "page": 4, "keywords": ["thirty"]},
+  {"question": "Can a party get a court order to stop a breach of confidentiality?", "file": "Northwind-Quillon-NDA.pdf", "page": 4, "keywords": ["injunctive"]},
+  {"question": "What is the maximum liability under the NDA?", "file": "Northwind-Quillon-NDA.pdf", "page": 4, "keywords": ["500,000"]},
+  {"question": "Does the NDA give any patent rights?", "file": "Northwind-Quillon-NDA.pdf", "page": 4, "keywords": ["licence"]},
+  {"question": "Which state's law governs the NDA?", "file": "Northwind-Quillon-NDA.pdf", "page": 5, "keywords": ["New York"]},
+  {"question": "How are NDA disputes resolved?", "file": "Northwind-Quillon-NDA.pdf", "page": 5, "keywords": ["arbitration"]},
+  {"question": "Who signed on behalf of Quillon?", "file": "Northwind-Quillon-NDA.pdf", "page": 5, "keywords": ["Okafor"]},
+
+  {"question": "How much is the monthly fee for the logistics services?", "file": "Northwind-Harbor-MSA.pdf", "page": 1, "keywords": ["42,000"]},
+  {"question": "Within how many days must invoices from the logistics provider be paid?", "file": "Northwind-Harbor-MSA.pdf", "page": 1, "keywords": ["45"]},
+  {"question": "What happens if deliveries are late too often?", "file": "Northwind-Harbor-MSA.pdf", "page": 2, "keywords": ["service credit"]},
+  {"question": "For how long after the services agreement ends must business information stay confidential?", "file": "Northwind-Harbor-MSA.pdf", "page": 2, "keywords": ["three"]},
+  {"question": "How much notice is needed to cancel the services contract without cause?", "file": "Northwind-Harbor-MSA.pdf", "page": 3, "keywords": ["sixty"]},
+  {"question": "What is the liability cap in the master services agreement?", "file": "Northwind-Harbor-MSA.pdf", "page": 3, "keywords": ["2,000,000"]},
+  {"question": "How much cargo insurance must Harbor carry?", "file": "Northwind-Harbor-MSA.pdf", "page": 4, "keywords": ["5,000,000"]},
+  {"question": "Which courts handle disputes under the logistics agreement?", "file": "Northwind-Harbor-MSA.pdf", "page": 4, "keywords": ["San Francisco"]},
+  {"question": "Who signed for the logistics company?", "file": "Northwind-Harbor-MSA.pdf", "page": 4, "keywords": ["Raman"]}
+]
